@@ -298,7 +298,8 @@ from PIL import Image
 import torch
 from surya.recognition import RecognitionPredictor
 from surya.detection import DetectionPredictor
-from engines.concrete_implementations.suryaOCR import SuryaOCREngine
+from engines.concrete_implementations.easyOCR import EasyOCREngine
+from engines.concrete_implementations.tesseractOCR import TesseractOCREngine
 
 IMAGE_PATH_1 = 'D:\\ASU\\sem 10\\GRAD PROJ\\EvenBetterOCR\\test\\input\\page_1.png'
 IMAGE_PATH_2 = 'C:\\Users\\Adham\\Downloads\\Ameriya_Extract\\0 (1).png'
@@ -307,5 +308,10 @@ image_1 = Image.open(IMAGE_PATH_1)
 image_2 = Image.open(IMAGE_PATH_2)
 image_3 = Image.open(IMAGE_PATH_3)
 
-surya_engine = SuryaOCREngine()
-surya_engine.draw_detection_boxes(image_1)
+# eOCR = EasyOCREngine(['ar'], gpu=True)
+# eOCR.display_annotated_output(image_1)
+# eOCR.display_bounding_boxes(image_1)
+
+# tesseract = TesseractOCREngine(['ara'])
+# tesseract.display_bounding_boxes(image_1)
+# tesseract.display_annotated_output(image_1)
