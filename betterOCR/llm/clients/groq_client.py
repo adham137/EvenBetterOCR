@@ -1,6 +1,6 @@
 from langchain_groq import ChatGroq
 import os
-class GroqLLM:
+class GroqClient:
     def __init__(self, model_name="gemma2-9b-it", api_token=None):
         self.model_name = model_name
         self.api_token = api_token or os.environ.get("GROQ_API_KEY")
