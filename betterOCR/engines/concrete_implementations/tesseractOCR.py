@@ -7,10 +7,16 @@ import pandas as pd # For parsing Tesseract's TSV output
 
 logger = logging.getLogger(__name__)
 
+
+LANG_CODE_MAPPING = {
+    "ar": "ara",
+    "en": "eng",
+}
+
 class TesseractOCREngine(OCREngine):
     def __init__(self, lang: List[str], **kwargs):
         # Tesseract languages are typically specified as a single string, e.g., 'eng+ara'
-        super().__init__("+".join(lang), **kwargs)               #### Adjust lang format for Tesseract
+        super().__init__("+".join([LANG_CODE_MAPPING[l] for l in lang if l in LANG_CODE_MAPPING]), **kwargs) ### Special language mapping for tesseract
         self.tesseract_config = self.configs.get("tesseract_config", "") 
         
         tesseract_cmd = self.configs.get("tesseract_cmd")

@@ -1,8 +1,7 @@
-# betterOCR/llm_processor.py
 import logging
 import json
 from typing import Dict, List
-from clients.groq_client import GroqClient
+from .clients.groq_client import GroqClient
 from llm.prompts import TEXT_DETECTION_PROMPT_TEMPLATE, BOX_DETECTION_PROMPT_TEMPLATE 
 
 logger = logging.getLogger(__name__)
