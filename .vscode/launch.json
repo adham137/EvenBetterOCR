@@ -12,8 +12,8 @@
             "program": "${file}", 
             "args": [
                 "test/input/page_1.png",
-                "--output_file",
-                "test/input/out.txt"
+                "--output_file","test/input/out.txt",
+                "--no-use_llm"
             ]
         }
     ]

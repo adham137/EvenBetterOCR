@@ -202,6 +202,14 @@ def main():
 
     if args.output_file:
         try:
+            if not isinstance(final_text, str):
+                new_final_text: List[str] = []
+                for i, page in enumerate(final_text):
+                    new_final_text.append(f"---- page {i} ----\n")
+                    for j, ocr_out in enumerate(page):
+                        new_final_text.append(f"OCR{j}: \n{ocr_out}\n")
+                    new_final_text.append("-------------------------\n")
+                final_text = "".join(new_final_text)
             with open(args.output_file, "w", encoding="utf-8") as f:
                 f.write(final_text)
             logger.info(f"Final output saved to: {args.output_file}")
