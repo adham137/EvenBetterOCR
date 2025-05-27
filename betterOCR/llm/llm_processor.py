@@ -36,10 +36,11 @@ class LLMProcessor:
         Returns:
             The fully formatted prompt string.
         """
+        
         prompt_data = {
-            "result_indexes_prompt": " ".join([f"[{i}]" for i in range(len(combined_ocr_output))]),
+            "result_indexes_prompt": " ".join([f"[{i}]" for i in range(len(combined_ocr_output[0]))]),
             "lang_list_str": lang_list_str,
-            "result_prompt": "\n".join(f"[{i}] {t} [{i}]" for i, t in enumerate(combined_ocr_output)),
+            "result_prompt": "\n".join(f"[{i}] {t} [{i}]" for i, t in enumerate(combined_ocr_output[0])),
             "optional_context_prompt": f"[context]\n{context_keywords}\n[/context]" if context_keywords else ""
         }
         

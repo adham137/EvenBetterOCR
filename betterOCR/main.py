@@ -29,7 +29,7 @@ logger = logging.getLogger("BetterOCR_Main")
 # --- ---
 
 AVAILABLE_ENGINES = {
-    # "easyocr": EasyOCREngine,
+    "easyocr": EasyOCREngine,
     # "suryaocr": SuryaOCREngine,
     "tesseractocr": TesseractOCREngine
 }
