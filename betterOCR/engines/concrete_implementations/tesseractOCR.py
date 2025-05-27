@@ -28,38 +28,53 @@ class TesseractOCREngine(OCREngine):
     def get_structured_output(self, image: Image.Image) -> List[Dict[str, Any]]:
         logger.debug("TesseractOCR: Getting structured output.")
         try:
-            data_str = pytesseract.image_to_data(
-                image.convert("RGB"), 
-                lang=self.lang, 
+            # 1) Ask Tesseract for a dict of lists instead of TSV
+            data = pytesseract.image_to_data(
+                image.convert("RGB"),
+                lang=self.lang,
                 config=self.tesseract_config,
-                output_type=pytesseract.Output.STRING
+                output_type=pytesseract.Output.DICT
             )
             
-            # Parse the TSV data
-            from io import StringIO
-            df = pd.read_csv(StringIO(data_str), sep='\t')
-            
-            results = []
-            # Filter out entries with low confidence or no text
-            df_filtered = df[df.conf > -1] 
+            n_boxes = len(data['level'])
+            results: List[Dict[str, Any]] = []
+            seen = set()
 
-            for index, row in df_filtered.iterrows():
-                if pd.notna(row['text']) and str(row['text']).strip():
-                    x, y, w, h = int(row['left']), int(row['top']), int(row['width']), int(row['height'])
-                    results.append({
-                        'bbox': [x, y, x + w, y + h],
-                        'text': str(row['text']),
-                        'confidence': float(row['conf'])
-                        # Tesseract data also has 'level', 'page_num', 'block_num', 'par_num', 'line_num', 'word_num'
-                    })
+            # 2) Loop through all boxes, but only take word (level=5)
+            for i in range(n_boxes):
+                if data['level'][i] != 5:
+                    continue
+                
+                text = data['text'][i].strip()
+                conf = float(data['conf'][i])
+                if not text or conf < 0:
+                    continue
+
+                x, y = int(data['left'][i]), int(data['top'][i])
+                w, h = int(data['width'][i]), int(data['height'][i])
+                bbox = (x, y, x + w, y + h)
+
+                # 3) Dedupe exact repeats
+                key = (text, bbox)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                results.append({
+                    'bbox': [*bbox],
+                    'text': text,
+                    'confidence': conf
+                })
+
             logger.debug(f"TesseractOCR: Structured output generated with {len(results)} items.")
             return results
+
         except pytesseract.TesseractNotFoundError:
             logger.error("Tesseract is not installed or not found in your PATH.")
             raise
         except Exception as e:
             logger.error(f"TesseractOCR: Error during OCR processing: {e}")
-            return [] 
+            return []
 
     def recognize_text(self, image: Image.Image) -> str:
         logger.debug("TesseractOCR: Starting text recognition.")
@@ -87,6 +102,7 @@ class TesseractOCREngine(OCREngine):
         except IOError:
             font = ImageFont.load_default()
 
+
         for item in structured_output:
             x1, y1, x2, y2 = item['bbox']
             draw.rectangle([x1, y1, x2, y2], outline="blue", width=2) # Blue for Tesseract
@@ -97,7 +113,6 @@ class TesseractOCREngine(OCREngine):
                     bbox = draw.textbbox(text_position, text_to_draw, font=font)
                     draw.rectangle(bbox, fill="blue")
                     draw.text(text_position, text_to_draw, fill="white", font=font)
-        
         display_image.show(title="TesseractOCR Output")
 
     def display_bounding_boxes(self, image: Image.Image, structured_output: List[Dict[str, Any]] = None):
