@@ -207,7 +207,7 @@ def main():
                 for i, page in enumerate(final_text):
                     new_final_text.append(f"---- page {i} ----\n")
                     for j, ocr_out in enumerate(page):
-                        new_final_text.append(f"OCR{j}: \n{ocr_out}\n")
+                        new_final_text.append(f"\nOCR_{j}: \n {ocr_out} \n")
                     new_final_text.append("-------------------------\n")
                 final_text = "".join(new_final_text)
             with open(args.output_file, "w", encoding="utf-8") as f:
