@@ -11,7 +11,7 @@
             "request": "launch",
             "program": "${file}", 
             "args": [
-                "test/input/page_1.png",
+                "data/big_doc.pdf",// "test/input/page_1.png",
                 "--output_file","test/input/out.txt",
                 "--no-use_llm"
             ]

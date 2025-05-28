@@ -1,40 +1,40 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Dict, Any
 from PIL import Image
 
 class OCREngine(ABC):
     @abstractmethod
-    def __init__(self, lang: List[str], **kwargs):
+    def __init__(self, langs: List[str], **kwargs):
         """
         Initialize the OCR engine.
         Args:
-            lang: List of language codes (e.g., ['en', 'ar']).
+            langs: List of language codes (e.g., ['en', 'ar']).
             **kwargs: Additional engine-specific configurations.
         """
-        self.lang = lang
+        self.langs = langs
         self.configs = kwargs
 
     @abstractmethod
-    def recognize_text(self, image: Image.Image) -> str:
+    def recognize_text(self, images: List[Image.Image]) -> List[str]:
         """
-        Perform OCR on the given image and return the recognized text as a single string.
+        Perform OCR on the given list of images and return recognized text for each.
         Args:
-            image: A PIL Image object to process.
+            images: A list of PIL Image objects to process.
         Returns:
-            A string containing all recognized text from the image.
+            A list of strings, where each string contains all recognized text from the corresponding image.
         """
         pass
 
     @abstractmethod
-    def get_structured_output(self, image: Image.Image) -> List[dict]:
+    def get_structured_output(self, images: List[Image.Image]) -> List[List[Dict[str, Any]]]:
         """
-        Perform OCR and return a structured output.
+        Perform OCR and return a structured output for each image.
         Each dict should contain 'bbox' (e.g., [x1, y1, x2, y2]) and 'text'.
         Args:
-            image: A PIL Image object to process.
+            images: A list of PIL Image objects to process.
         Returns:
-            A list of dictionaries, where each dictionary represents a detected text block
-            and contains its bounding box and recognized text.
+            A list of lists of dictionaries. Outer list corresponds to images.
+            Inner list contains detected text blocks for that image.
         """
         pass
 
