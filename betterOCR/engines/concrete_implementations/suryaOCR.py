@@ -15,8 +15,8 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 class SuryaOCREngine(OCREngine):
-    def __init__(self, lang: List[str], **kwargs):
-        super().__init__(lang, **kwargs)                # lang not important to surya currently
+    def __init__(self, lang_list: List[str], **kwargs):
+        super().__init__(lang_list, **kwargs)                # lang not important to surya currently
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logger.info(f"SuryaOCR: Using device: {self.device}")
     
@@ -30,42 +30,49 @@ class SuryaOCREngine(OCREngine):
             raise
 
         
-    def _get_text_detections(self, image: Image.Image) -> List[Any]: 
-        predictions =   self.recognition_predictor([image.convert("RGB")], det_predictor=self.detection_predictor, return_words=True)[0]   # Ensure RGB and return words
-        if predictions and hasattr(predictions, 'text_lines'):
-            return predictions                 # assuming single image processing
+    def _get_text_detections(self, images: List[Image.Image]) -> List[List[Any]]: 
+        predictions =   self.recognition_predictor([image.convert("RGB") for image in images], det_predictor=self.detection_predictor, return_words=True)   # Ensure RGB and return words
+        if len(predictions) and hasattr(predictions[0], 'text_lines'):
+            return predictions                 # return a list of predictions (one for each page)
         return []
     
-    def _get_line_detections(self, image: Image.Image) -> List[Any]: 
-        predictions =   self.detection_predictor([image.convert("RGB")])[0]   # Ensure RGB
-        if predictions and hasattr(predictions, 'bboxes'):
-            return predictions.bboxes                 # assuming single image processing
+    def _get_line_detections(self, images: List[Image.Image]) -> List[List[Any]]: 
+        predictions =   self.detection_predictor([image.convert("RGB") for image in images]) # Ensure RGB
+        if len(predictions) and hasattr(predictions[0], 'bboxes'):
+            return predictions                 # return a list of predictions (one for each page)
         return []
 
-    def get_structured_output(self, image: Image.Image) -> List[Dict[str, Any]]:
+    def get_structured_output(self, images: List[Image.Image]) -> List[List[Dict[str, Any]]]:
         logger.debug("SuryaOCR: Getting structured output.")
-        img_rgb = image.convert("RGB")
-        detections = self._get_text_detections(img_rgb)
+        detections = self._get_text_detections(images)
         
-        words_dict = []
-        for line in detections.text_lines:
-            if line.words:
-                for word in line.words:
-                    if word.bbox_valid:
-                        words_dict.append({
-                            'bbox': word.bbox,
-                            'text': word.text,
-                            'confidence': word.confidence
-                        })
-        logger.debug(f"SuryaOCR: Structured output generated with {len(words_dict)} items.")
-        return words_dict
+        pages = []
+        # words_dict = []
+        for page in detections:
+            words_dict = []
+            for line in page.text_lines:
+                if line.words:
+                    for word in line.words:
+                        if word.bbox_valid:
+                            words_dict.append({
+                                'bbox': word.bbox,
+                                'text': word.text,
+                                'confidence': word.confidence
+                            })
+            pages.append(words_dict)
+        logger.debug(f"SuryaOCR: Structured output generated with {len(pages)} pages.")
+        return pages
         
-    def recognize_text(self, image: Image.Image) -> str:
+    def recognize_text(self, images: List[Image.Image]) -> List[str]:
         logger.debug("SuryaOCR: Starting text recognition.")
-        lines = self._get_text_detections(self, image).text_lines
-        full_text = "\n".join([line.text for line in lines])  # you can add a confidence threshold here also
-        logger.debug(f"SuryaOCR: Recognized text: {full_text[:200]}...")
-        return full_text
+        detections = self._get_text_detections(self, images)
+        pages = []
+        for page in detections:
+            lines = page.text_lines
+            full_page_text = "\n".join([line.text for line in lines])  # you can add a confidence threshold here also
+            pages.append(full_page_text)
+        logger.debug(f"SuryaOCR: Recognized text for {len(detections)} pages")
+        return pages
 
     def _draw_on_image(self, image: Image.Image, items_to_draw: List[Dict[str, Any]], draw_text_content: bool = False, box_color="lime", text_color="black", font_size=10):
         img_display = image.convert("RGB").copy()
@@ -100,14 +107,15 @@ class SuryaOCREngine(OCREngine):
 
     def display_textline_boxes(self, image: Image.Image):
         logger.info("SuryaOCR: Displaying text lines bounding boxes.")
-        detections = self._get_line_detections(image)
-        items_to_draw = [{'bbox': det.bbox, 'confidence': det.confidence} for det in detections]
+        detections = self._get_line_detections([image])
+        items_to_draw = [{'bbox': det.bbox, 'confidence': det.confidence} for det in detections[0].bboxes]
         self._draw_on_image(image, items_to_draw, draw_text_content=False)
 
     def display_bounding_boxes(self, image: Image.Image, structured_output: List[Dict[str, Any]] = None):
+        # if the structured output is provided, it must be of only one image
         logger.info("SuryaOCR: Displaying bounding boxes.")
         if structured_output is None:
-            detections = self.get_structured_output(image)
+            detections = self.get_structured_output([image])[0]
             items_to_draw = [{'bbox': det.bbox, 'confidence': det.confidence} for det in detections]
         else:
             items_to_draw = structured_output
@@ -116,5 +124,5 @@ class SuryaOCREngine(OCREngine):
     def display_annotated_output(self, image: Image.Image, structured_output: List[Dict[str, Any]] = None):
         logger.info("SuryaOCR: Displaying annotated output.")
         if structured_output is None:
-            structured_output = self.get_structured_output(image)
+            structured_output = self.get_structured_output([image])[0]
         self._draw_on_image(image, structured_output, draw_text_content=True)
