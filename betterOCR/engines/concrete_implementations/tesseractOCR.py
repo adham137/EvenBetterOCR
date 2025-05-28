@@ -14,24 +14,43 @@ LANG_CODE_MAPPING = {
 }
 
 class TesseractOCREngine(OCREngine):
-    def __init__(self, lang: List[str], **kwargs):
-        # Tesseract languages are typically specified as a single string, e.g., 'eng+ara'
-        super().__init__("+".join([LANG_CODE_MAPPING[l] for l in lang if l in LANG_CODE_MAPPING]), **kwargs) ### Special language mapping for tesseract
+    def __init__(self, lang_list: List[str], **kwargs): # Takes lang_list
+        super().__init__(lang_list, **kwargs) # Passes lang_list to super
+        
+        # Create Tesseract-specific language string (e.g., 'eng+ara')
+        self.tesseract_lang_str = "+".join([LANG_CODE_MAPPING.get(l, l) for l in self.lang_list])
+        
         self.tesseract_config = self.configs.get("tesseract_config", "") 
         
         tesseract_cmd = self.configs.get("tesseract_cmd")
         if tesseract_cmd:
             pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
             
-        logger.info(f"TesseractOCR engine initialized for languages: {self.lang}. Config: '{self.tesseract_config}'")
+        logger.info(f"TesseractOCR engine initialized for languages: {self.tesseract_lang_str}. Config: '{self.tesseract_config}'")
 
-    def get_structured_output(self, image: Image.Image) -> List[Dict[str, Any]]:
+    def get_structured_output(self, images: List[Image.Image]) -> List[List[Dict[str, Any]]]:
+        logger.debug(f"TesseractOCR: Getting structured output for {len(images)} images.")
+        all_outputs = []
+        for i, image in enumerate(images):
+            logger.debug(f"TesseractOCR: Processing image {i+1}/{len(images)} for structured output.")
+            all_outputs.append(self._get_structured_output_single_image(image))
+        return all_outputs
+
+    def recognize_text(self, images: List[Image.Image]) -> List[str]:
+        logger.debug(f"TesseractOCR: Starting text recognition for {len(images)} images.")
+        all_texts = []
+        for i, image in enumerate(images):
+            logger.debug(f"TesseractOCR: Processing image {i+1}/{len(images)} for text.")
+            all_texts.append(self._recognize_text_single_image(image))
+        return all_texts
+
+    def _get_structured_output_single_image(self, image: Image.Image) -> List[Dict[str, Any]]:
         logger.debug("TesseractOCR: Getting structured output.")
         try:
             # 1) Ask Tesseract for a dict of lists instead of TSV
             data = pytesseract.image_to_data(
                 image.convert("RGB"),
-                lang=self.lang,
+                lang=self.tesseract_lang_str,
                 config=self.tesseract_config,
                 output_type=pytesseract.Output.DICT
             )
@@ -76,12 +95,12 @@ class TesseractOCREngine(OCREngine):
             logger.error(f"TesseractOCR: Error during OCR processing: {e}")
             return []
 
-    def recognize_text(self, image: Image.Image) -> str:
+    def _recognize_text_single_image(self, image: Image.Image) -> str:
         logger.debug("TesseractOCR: Starting text recognition.")
         try:
             text = pytesseract.image_to_string(
                 image.convert("RGB"), 
-                lang=self.lang, 
+                lang=self.tesseract_lang_str, 
                 config=self.tesseract_config
             )
             logger.debug(f"TesseractOCR: Recognized text: {text[:200]}...")
@@ -118,11 +137,11 @@ class TesseractOCREngine(OCREngine):
     def display_bounding_boxes(self, image: Image.Image, structured_output: List[Dict[str, Any]] = None):
         logger.info("TesseractOCR: Displaying bounding boxes.")
         if structured_output is None:
-            structured_output = self.get_structured_output(image)
+            structured_output = self._get_structured_output_single_image(image)
         self._draw_on_image(image, structured_output, draw_text=False)
 
     def display_annotated_output(self, image: Image.Image, structured_output: List[Dict[str, Any]] = None):
         logger.info("TesseractOCR: Displaying annotated output.")
         if structured_output is None:
-            structured_output = self.get_structured_output(image)
+            structured_output = self._get_structured_output_single_image(image)
         self._draw_on_image(image, structured_output, draw_text=True)

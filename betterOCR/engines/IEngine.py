@@ -4,14 +4,14 @@ from PIL import Image
 
 class OCREngine(ABC):
     @abstractmethod
-    def __init__(self, langs: List[str], **kwargs):
+    def __init__(self, lang_list: List[str], **kwargs):
         """
         Initialize the OCR engine.
         Args:
             langs: List of language codes (e.g., ['en', 'ar']).
             **kwargs: Additional engine-specific configurations.
         """
-        self.langs = langs
+        self.lang_list = lang_list
         self.configs = kwargs
 
     @abstractmethod
