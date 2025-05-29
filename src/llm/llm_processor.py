@@ -64,36 +64,61 @@ class LLMProcessor:
 
     def parse_llm_output(self, llm_raw_output: str) -> str:
         """
-        Parses the LLM's JSON output to extract the refined text.
+        Parses the LLM's JSON output to extract the 'data' field.
         Expected format: {"data": "<output_string>"}
         """
-        logger.debug(f"Attempting to parse LLM output (first 100 chars): {llm_raw_output[:100]}")
+        logger.debug(f"Raw LLM output (first 200 chars): {llm_raw_output[:200]!r}")
+
+        # 1) Try to pull out any JSON code fences first
+        fenced = re.search(r"```json(.*?)```", llm_raw_output, re.DOTALL | re.IGNORECASE)
+        candidate = fenced.group(1) if fenced else llm_raw_output
+
+        # 2) Extract first balanced {...} block
+        json_snip = LLMProcessor._extract_braced_block(candidate)
+        if not json_snip:
+            logger.warning("No JSON block found in LLM output.")
+            return f"[LLM_PARSE_ERROR: No JSON block found. Raw: {llm_raw_output}]"
+
+        # 3) Clean up common slip-ups
+        json_str = LLMProcessor._clean_json_snippet(json_snip)
+        logger.debug(f"Cleaned JSON candidate: {json_str!r}")
+
+        # 4) Attempt parse
         try:
-            
-            json_match = re.search(r"```json\s*(\{.*?\})\s*```", llm_raw_output, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else: # Fallback to finding first '{' and last '}'
-                json_start = llm_raw_output.find('{')
-                json_end = llm_raw_output.rfind('}') + 1
-                if json_start != -1 and json_end != -1 and json_start < json_end:
-                    json_str = llm_raw_output[json_start:json_end]
-                else:
-                    logger.warning(f"Could not find valid JSON structure in LLM output: {llm_raw_output}")
-                    return f"[LLM_PARSE_ERROR: No valid JSON found. Raw output: {llm_raw_output}]"
-
-            logger.debug(f"Extracted JSON string for parsing: {json_str}")
-            data = json.loads(json_str)
-            if "data" in data and isinstance(data["data"], str):
-                logger.info("LLM output parsed successfully.")
-                return data["data"]
-            else:
-                logger.warning(f"LLM JSON output does not contain 'data' key with a string value. Found keys: {data.keys()}. JSON: {json_str}")
-                return f"[LLM_PARSE_ERROR: 'data' field missing or not a string in {json_str}]"
-
+            payload = json.loads(json_str)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to decode JSON from LLM output: {e}. Extracted JSON was: '{json_str if 'json_str' in locals() else 'Not Extracted'}' Raw output: {llm_raw_output}")
-            return f"[LLM_PARSE_ERROR: JSONDecodeError - {e}. Raw output: {llm_raw_output}]"
-        except Exception as e:
-            logger.error(f"An unexpected error occurred while parsing LLM output: {e}", exc_info=True)
-            return f"[LLM_PARSE_ERROR: Unexpected error - {e}. Raw output: {llm_raw_output}]"
+            logger.error(f"JSON decode error: {e}. Snippet was: {json_str!r}")
+            return f"[LLM_PARSE_ERROR: JSONDecodeError - {e}. Snippet: {json_str}]"
+
+        # 5) Extract and return
+        val = payload.get("data")
+        if isinstance(val, str):
+            logger.info("Successfully parsed LLM data.")
+            return val
+        else:
+            logger.warning(f"'data' missing or not a string in JSON: keys={list(payload)}")
+            return f"[LLM_PARSE_ERROR: 'data' missing or not str in {json_str}]"
+    
+    @staticmethod
+    def _extract_braced_block(text: str) -> str | None:
+        """Return the first {...} block in `text` by counting braces, or None."""
+        start = text.find('{')
+        if start < 0:
+            return None
+        depth = 0
+        for i, ch in enumerate(text[start:], start):
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    return text[start:i+1]
+        return None
+    @staticmethod
+    def _clean_json_snippet(js: str) -> str:
+        # strip surrounding backticks or quotes
+        
+        js = js.strip("`\" \n")
+        # remove trailing commas before a closing brace
+        js = re.sub(r",\s*}", "}", js)
+        return js
