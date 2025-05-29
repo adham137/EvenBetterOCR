@@ -3,7 +3,7 @@ import argparse
 import json
 import logging
 import os
-from typing import List, Dict
+from typing import Any, List, Dict
 
 from parsers.parser import DocumentParser
 from combiner.combiner import OCRCombiner
@@ -29,8 +29,8 @@ logger = logging.getLogger("BetterOCR_Main")
 # --- ---
 
 AVAILABLE_ENGINES = {
-    "easyocr": EasyOCREngine,
-    # "suryaocr": SuryaOCREngine,
+    # "easyocr": EasyOCREngine,
+    "suryaocr": SuryaOCREngine,
     "tesseractocr": TesseractOCREngine
 }
 
@@ -80,16 +80,13 @@ def main():
     setup_global_logging_level(args.verbose)
     logger.info(f"Application started with arguments: {args}")
 
-    # 1. Initialize Engine Registry and Register Engines
     engine_registry = EngineRegistry()
     for name, cls in AVAILABLE_ENGINES.items():
-        if name in args.ocr_engines: # Only register requested engines
+        if name in args.ocr_engines:
             engine_registry.register_engine(name, cls)
 
-    # 2. Initialize Document Parser
     doc_parser = DocumentParser()
 
-    # Parse engine_configs_json
     try:
         engine_configs = json.loads(args.engine_configs_json)
         if not isinstance(engine_configs, dict):
@@ -98,8 +95,6 @@ def main():
         logger.error(f"Invalid JSON string for --engine_configs_json: {e}. Using empty configs.")
         engine_configs = {}
 
-
-    # --- Optional: Display functions for a single engine on the first page ---
     if args.display_bounding_boxes or args.display_annotated_output:
         display_engine_name = args.display_bounding_boxes or args.display_annotated_output
         logger.info(f"Attempting to display output for engine: {display_engine_name}")
@@ -110,12 +105,7 @@ def main():
                 engine_class_to_display = engine_registry.get_engine_class(display_engine_name)
                 engine_config_display = engine_configs.get(display_engine_name, {})
                 
-                # Tesseract lang needs to be 'eng+ara' not ['en','ar']
-                display_lang_param = args.lang
-                if display_engine_name == "tesseractocr":
-                    display_lang_param = "+".join(args.lang)
-
-                engine_to_display = engine_class_to_display(lang=display_lang_param, **engine_config_display)
+                engine_to_display = engine_class_to_display(lang_list=args.lang, **engine_config_display)
 
                 if args.display_bounding_boxes:
                     logger.info(f"Displaying bounding boxes for {display_engine_name} on the first page...")
@@ -126,101 +116,150 @@ def main():
             else:
                 logger.warning("No images loaded, cannot perform display operation.")
         except Exception as e:
-            logger.error(f"Error during display operation for engine {display_engine_name}: {e}")
-        # After display, the user might want to exit or continue. For now, we continue.
+            logger.error(f"Error during display operation for engine {display_engine_name}: {e}", exc_info=True)
 
-
-    # 3. Initialize OCR Combiner
     combiner = OCRCombiner(
         engine_registry=engine_registry,
         engine_names=args.ocr_engines,
         document_parser=doc_parser,
         document_path=args.document_path,
-        lang_list=args.lang, # Pass the list of languages directly
+        lang_list=args.lang, # Pass the list of languages directly (e.g. ['en', 'ar'])
         engine_configs=engine_configs
     )
 
-    # 4. Run OCR Pipeline
-    logger.info("Starting OCR processing...")
-    combined_ocr_text = combiner.run_ocr_pipeline_parallel()
+    logger.info("Starting OCR processing for all pages...")
+    # combined_ocr_text_per_page is List[List[str]] -> List of pages, each page is List of engine texts
+    combined_ocr_text_per_page = combiner.run_ocr_pipeline_parallel() 
     
-    logger.info("Combined OCR text processing completed.")
-    if args.verbose >=2 : # DEBUG
-        logger.debug(f"--- Combined OCR Output ---\n{combined_ocr_text}\n--- End of Combined OCR Output ---")
-    else:
-        logger.info(f"Combined OCR Output (first 500 chars): {combined_ocr_text[:500]}...")
+    logger.info("Combined OCR text processing completed for all pages.")
+    if args.verbose >=2 and combined_ocr_text_per_page:
+        for i, page_data in enumerate(combined_ocr_text_per_page[:2]): # Log first 2 pages detail in debug
+            logger.debug(f"--- Combined OCR Page {i+1} ---")
+            for j, engine_text in enumerate(page_data):
+                logger.debug(f"  Engine {args.ocr_engines[j]}: {engine_text[:100]}...")
+    elif combined_ocr_text_per_page and combined_ocr_text_per_page[0]:
+         logger.info(f"Combined OCR Output (Page 1, Engine 1, first 100 chars): {combined_ocr_text_per_page[0][0][:100]}...")
 
 
-    final_text = combined_ocr_text
+    final_processed_content: Any = combined_ocr_text_per_page 
 
-    # 5. LLM Refinement (if enabled)
     if args.use_llm:
         logger.info("LLM refinement is enabled.")
         if not args.groq_api_key:
-            logger.warning("Groq API key not provided. LLM refinement will be skipped. "
-                           "Set GROQ_API_KEY environment variable or use --groq_api_key argument.")
+            logger.warning("Groq API key not provided. LLM refinement will be skipped.")
+        elif not combined_ocr_text_per_page or not combined_ocr_text_per_page[0] : # Check if there's content
+            logger.warning("No OCR content to refine with LLM.")
         else:
             try:
-                groq_client = GroqClient(model_name=args.llm_model_name)
+                # Ensure GROQ_API_KEY is set if using GroqClient implicitly
+                if not os.environ.get("GROQ_API_KEY") and not args.groq_api_key:
+                    logger.error("GROQ_API_KEY environment variable must be set for GroqClient if --groq_api_key is not provided.")
+                    raise ValueError("Groq API Key missing")
+                
+                # GroqClient will use args.groq_api_key if provided, else os.environ.get("GROQ_API_KEY")
+                groq_client = GroqClient(model_name=args.llm_model_name, api_token=args.groq_api_key)
                 llm_processor = LLMProcessor(llm_client=groq_client)
-                
-                # LLM model_kwargs (example, temperature)
                 llm_model_kwargs = {"temperature": args.llm_temp}
+                lang_list_str_for_llm = ", ".join(args.lang)
 
-                logger.info(f"Sending combined text to LLM ({args.llm_model_name}) for refinement...")
-                lang_list_str_for_llm = ", ".join(args.lang) # e.g., "en, ar"
-                
-                raw_llm_response = llm_processor.refine_text(
-                    combined_ocr_text, 
-                    lang_list_str=lang_list_str_for_llm,
-                    context_keywords=args.llm_context_keywords,
-                    model_kwargs=llm_model_kwargs
-                )
-                print(raw_llm_response)
-                exit
-                if "[LLM_ERROR:" not in raw_llm_response:
-                    logger.info("Parsing LLM response...")
-                    final_text = llm_processor.parse_llm_output(raw_llm_response)
-                    logger.info("LLM refinement complete.")
-                    if args.verbose >=2: # DEBUG
-                         logger.debug(f"--- LLM Refined Output ---\n{final_text}\n--- End of LLM Refined Output ---")
+                refined_texts_all_pages: List[str] = []
+                num_pages_to_refine = len(combined_ocr_text_per_page)
+                logger.info(f"Starting LLM refinement for {num_pages_to_refine} pages...")
+
+                for i, page_engine_outputs in enumerate(combined_ocr_text_per_page):
+                    page_num = i + 1
+                    logger.info(f"Sending Page {page_num}/{num_pages_to_refine} to LLM ({args.llm_model_name}) for refinement...")
+                    
+                    raw_llm_response = llm_processor.refine_text(
+                        page_engine_outputs, 
+                        lang_list_str=lang_list_str_for_llm,
+                        context_keywords=args.llm_context_keywords,
+                        model_kwargs=llm_model_kwargs
+                    )
+                    
+                    # Check for errors from refine_text or parsing errors
+                    if "[LLM_ERROR" not in raw_llm_response.upper(): # General check for error markers
+                        logger.info(f"Parsing LLM response for Page {page_num}...")
+                        refined_page_text = llm_processor.parse_llm_output(raw_llm_response)
+                        
+                        if "[LLM_PARSE_ERROR" in refined_page_text.upper():
+                             logger.error(f"LLM parsing failed for Page {page_num}. Using raw LLM response as fallback for this page. Details: {refined_page_text}")
+                             refined_texts_all_pages.append(f"[LLM_REFINE_FAILED_PAGE_{page_num}_PARSE_ERROR: {raw_llm_response}]") # Or just refined_page_text which contains the error
+                        else:
+                            refined_texts_all_pages.append(refined_page_text)
+                            logger.info(f"LLM refinement complete for Page {page_num}.")
+                            if args.verbose >=2:
+                                 logger.debug(f"--- LLM Refined Output (Page {page_num}) ---\n{refined_page_text}\n--- End ---")
+                            else:
+                                logger.info(f"LLM Refined Output (Page {page_num}, first 100 chars): {refined_page_text[:100]}...")
                     else:
-                        logger.info(f"LLM Refined Output (first 500 chars): {final_text[:500]}...")
-                else:
-                    logger.error(f"LLM refinement failed. Using combined OCR text. LLM response: {raw_llm_response}")
-                    final_text = combined_ocr_text # Fallback to combined text
-            except Exception as e:
-                logger.error(f"An error occurred during LLM processing: {e}. Using combined OCR text.")
-                final_text = combined_ocr_text # Fallback
-    else:
-        logger.info("LLM refinement is disabled. Using combined OCR text.")
+                        logger.error(f"LLM refinement failed during API call for Page {page_num}. LLM response: {raw_llm_response}")
+                        refined_texts_all_pages.append(f"[LLM_REFINE_FAILED_PAGE_{page_num}_API_ERROR: {raw_llm_response}]")
+                
+                final_processed_content = refined_texts_all_pages 
+                logger.info("LLM refinement process completed for all applicable pages.")
 
-    # 6. Output Final Text
+            except Exception as e:
+                logger.error(f"An critical error occurred during the LLM processing setup or loop: {e}. Output may be mixed or fallback to OCR only.", exc_info=True)
+                # final_processed_content will retain combined_ocr_text_per_page or partially refined list
+    else:
+        logger.info("LLM refinement is disabled. Using combined OCR text per page.")
+
     print("\n--- Final Processed Text ---")
-    print(final_text)
+    output_string_for_file = ""
+
+    if isinstance(final_processed_content, list) and final_processed_content:
+        if isinstance(final_processed_content[0], str): # Case 1: List[str] (LLM refined texts per page)
+            logger.info("Formatting final output from list of refined page texts.")
+            page_texts_for_output = []
+            for i, page_text_content in enumerate(final_processed_content):
+                header = f"\n--- Page {i+1} ---\n"
+                print(header.strip())
+                print(page_text_content)
+                page_texts_for_output.append(header + page_text_content)
+            output_string_for_file = "\n".join(page_texts_for_output)
+
+        elif isinstance(final_processed_content[0], list): # Case 2: List[List[str]] (raw from OCR combiner)
+            logger.info("Formatting final output from list of pages with multiple engine texts.")
+            page_blocks_for_output = []
+            for i, page_outputs_list in enumerate(final_processed_content):
+                page_header = f"---- Page {i+1} ----\n"
+                current_page_block_parts = [page_header]
+                print(page_header.strip())
+                for j, ocr_engine_out in enumerate(page_outputs_list):
+                    engine_name = args.ocr_engines[j] if j < len(args.ocr_engines) else f"Engine {j+1}"
+                    engine_header = f"Output from {engine_name}:\n"
+                    print(engine_header.strip())
+                    print(ocr_engine_out)
+                    current_page_block_parts.append(engine_header)
+                    current_page_block_parts.append(ocr_engine_out + "\n")
+                current_page_block_parts.append("-------------------------\n")
+                page_blocks_for_output.append("".join(current_page_block_parts))
+            output_string_for_file = "".join(page_blocks_for_output)
+        else:
+            logger.warning(f"Final processed content is a list, but its elements are of an unrecognized type: {type(final_processed_content[0])}. Attempting direct string conversion.")
+            output_string_for_file = str(final_processed_content)
+            print(output_string_for_file)
+    elif final_processed_content: # Not a list but not None/empty
+        logger.warning(f"Final processed content is not a list: {type(final_processed_content)}. Attempting direct string conversion.")
+        output_string_for_file = str(final_processed_content)
+        print(output_string_for_file)
+    else: # Empty
+        logger.warning("Final processed content is empty.")
+        output_string_for_file = "[No content processed]"
+        print(output_string_for_file)
+        
     print("--- End of Final Processed Text ---")
 
     if args.output_file:
         try:
-            if not isinstance(final_text, str):
-                new_final_text: List[str] = []
-                for i, page in enumerate(final_text):
-                    new_final_text.append(f"---- page {i} ----\n")
-                    for j, ocr_out in enumerate(page):
-                        new_final_text.append(f"\nOCR_{j}: \n {ocr_out} \n")
-                    new_final_text.append("-------------------------\n")
-                final_text = "".join(new_final_text)
             with open(args.output_file, "w", encoding="utf-8") as f:
-                f.write(final_text)
+                f.write(output_string_for_file)
             logger.info(f"Final output saved to: {args.output_file}")
         except Exception as e:
-            logger.error(f"Failed to write output to file {args.output_file}: {e}")
+            logger.error(f"Failed to write output to file {args.output_file}: {e}", exc_info=True)
 
     logger.info("BetterOCR processing finished.")
 
 if __name__ == "__main__":
-    # Ensure the current directory (betterOCR) is in PYTHONPATH if running scripts from outside
-    # For example, if adham137-evenbetterocr/ is the root, and you run python betterOCR/main.py
-    # import sys
-    # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
     main()

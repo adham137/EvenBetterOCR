@@ -65,7 +65,7 @@ class SuryaOCREngine(OCREngine):
         
     def recognize_text(self, images: List[Image.Image]) -> List[str]:
         logger.debug("SuryaOCR: Starting text recognition.")
-        detections = self._get_text_detections(self, images)
+        detections = self._get_text_detections(images)
         pages = []
         for page in detections:
             lines = page.text_lines
