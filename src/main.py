@@ -6,7 +6,7 @@ import os
 from typing import List, Dict
 
 from parsers.parser import DocumentParser
-from engines.combiner import OCRCombiner
+from combiner.combiner import OCRCombiner
 from engines.EngineRegistry import EngineRegistry
 from engines.concrete_implementations.easyOCR import EasyOCREngine
 from engines.concrete_implementations.suryaOCR import SuryaOCREngine
@@ -136,7 +136,7 @@ def main():
         engine_names=args.ocr_engines,
         document_parser=doc_parser,
         document_path=args.document_path,
-        lang=args.lang, # Pass the list of languages directly
+        lang_list=args.lang, # Pass the list of languages directly
         engine_configs=engine_configs
     )
 

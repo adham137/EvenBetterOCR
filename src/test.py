@@ -21,7 +21,7 @@ images = parser.load_images_from_document(PDF_PATH)
 # print('******************\n'.join([ page for page in out]))
 # tesseractOCR.display_bounding_boxes(images[0])
 # tesseractOCR.display_annotated_output(images[0])
-
+ 
 # eOCR = EasyOCREngine(['ar'], gpu=True)
 # eOCR.display_annotated_output(image_1)
 # eOCR.display_bounding_boxes(image_1)
