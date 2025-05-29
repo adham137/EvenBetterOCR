@@ -2,6 +2,7 @@ from PIL import Image
 from typing import List
 import logging
 import os
+import fitz
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,15 @@ class DocumentParser:
                 logger.error("pdf2image library is not installed. Please install it to process PDF files ('pip install pdf2image').")
                 raise ImportError("pdf2image is required for PDF processing.")
         except Exception as e:
-            logger.error(f"Failed to load or parse document {document_path}: {e}")
-            raise ValueError(f"Could not process document {document_path}: {e}")
+            logger.error(f"Poppler/pdf2image failed: {e}; falling back to PyMuPDF")
+            images = self.load_with_pymupdf(document_path)
             
+        return images
+    def load_with_pymupdf(self, path):
+        doc = fitz.open(path)
+        images = []
+        for page in doc:
+            pix = page.get_pixmap()
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            images.append(img)
         return images
