@@ -31,8 +31,8 @@ class DocumentParser:
         try:
             if extension == '.pdf':
                 logger.debug(f"Parsing PDF document: {document_path}")
-                from pdf2image import convert_from_path
-                images = convert_from_path(document_path)
+                images = self.load_with_pymupdf(document_path)
+
                 logger.info(f"Successfully parsed {len(images)} pages from PDF: {document_path}")
             elif extension in ['.png', '.jpg', '.jpeg', '.bmp', '.tiff']:
                 logger.debug(f"Loading image document: {document_path}")
@@ -47,8 +47,9 @@ class DocumentParser:
                 logger.error("pdf2image library is not installed. Please install it to process PDF files ('pip install pdf2image').")
                 raise ImportError("pdf2image is required for PDF processing.")
         except Exception as e:
-            logger.error(f"Poppler/pdf2image failed: {e}; falling back to PyMuPDF")
-            images = self.load_with_pymupdf(document_path)
+            logger.error(f"PyMuPDF failed: {e}; falling back to Poppler/pdf2image")
+            from pdf2image import convert_from_path
+            images = convert_from_path(document_path)
             
         return images
     def load_with_pymupdf(self, path):

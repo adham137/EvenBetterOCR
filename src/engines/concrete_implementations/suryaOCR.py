@@ -11,7 +11,7 @@ import numpy as np
 
 os.environ['COMPILE_DETECTOR']='true'
 DETECTOR_BATCH_SIZE = 4     # Each batch takes 440mb of vram, calculate your own (Keep in mind that the models themselves take 2GB of vram)
-RECOGNITION_BATCH_SIZE = 45 # Each batch takes 40mb of vram, calculate your own (Keep in mind that the models themselves take 2GB of vram)
+RECOGNITION_BATCH_SIZE = 30 # Each batch takes 40mb of vram, calculate your own (Keep in mind that the models themselves take 2GB of vram)
 # os.environ['LAYOUT_BATCH_SIZE']='16'
 
 logger = logging.getLogger(__name__)
