@@ -3,7 +3,7 @@ import json
 import re
 from typing import Dict, List, Any 
 from .clients.groq_client import GroqClient 
-from llm.prompts import TEXT_DETECTION_PROMPT_TEMPLATE, BOX_DETECTION_PROMPT_TEMPLATE 
+from .prompts import TEXT_DETECTION_PROMPT_TEMPLATE, BOX_DETECTION_PROMPT_TEMPLATE 
 
 logger = logging.getLogger(__name__)
 

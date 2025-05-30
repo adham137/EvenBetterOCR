@@ -4,12 +4,14 @@ from surya.detection import DetectionPredictor
 from surya.layout import LayoutPredictor # For more detailed layout if needed later
 import torch
 import os
-from engines.IEngine import OCREngine
+from src.engines.IEngine import OCREngine
 from PIL import Image, ImageDraw, ImageFont
 import logging
 import numpy as np
 
-# os.environ['COMPILE_LAYOUT']='true'
+os.environ['COMPILE_DETECTOR']='true'
+DETECTOR_BATCH_SIZE = 4     # Each batch takes 440mb of vram, calculate your own (Keep in mind that the models themselves take 2GB of vram)
+RECOGNITION_BATCH_SIZE = 45 # Each batch takes 40mb of vram, calculate your own (Keep in mind that the models themselves take 2GB of vram)
 # os.environ['LAYOUT_BATCH_SIZE']='16'
 
 logger = logging.getLogger(__name__)
@@ -22,8 +24,8 @@ class SuryaOCREngine(OCREngine):
     
         try:
             self.recognition_predictor = RecognitionPredictor()
-            self.detection_predictor = DetectionPredictor()
-            self.detection_predictor.model = self.detection_predictor.model.to(device=self.device, dtype=torch.float32)
+            self.detection_predictor = DetectionPredictor(dtype=torch.float32)
+            # self.detection_predictor.model = self.detection_predictor.model.to(device=self.device, dtype=torch.float32)
             logger.info("SuryaOCR engine initialized.")
         except Exception as e:
             logger.error(f"Failed to initialize SuryaOCR engine: {e}")
@@ -31,7 +33,7 @@ class SuryaOCREngine(OCREngine):
 
         
     def _get_text_detections(self, images: List[Image.Image]) -> List[List[Any]]: 
-        predictions =   self.recognition_predictor([image.convert("RGB") for image in images], det_predictor=self.detection_predictor, return_words=True)   # Ensure RGB and return words
+        predictions =   self.recognition_predictor([image.convert("RGB") for image in images], det_predictor=self.detection_predictor, return_words=True, detection_batch_size= DETECTOR_BATCH_SIZE, recognition_batch_size= RECOGNITION_BATCH_SIZE)   # Ensure RGB and return words
         if len(predictions) and hasattr(predictions[0], 'text_lines'):
             return predictions                 # return a list of predictions (one for each page)
         return []

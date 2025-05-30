@@ -4,9 +4,9 @@ import logging
 from typing import Any, List, Dict, Type
 from PIL import Image
 
-from engines.IEngine import OCREngine
-from engines.EngineRegistry import EngineRegistry # To get engine classes
-from parsers.parser import DocumentParser
+from src.engines.IEngine import OCREngine
+from src.engines.EngineRegistry import EngineRegistry # To get engine classes
+from src.parsers.parser import DocumentParser
 
 logger = logging.getLogger(__name__)
 
