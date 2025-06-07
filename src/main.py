@@ -118,29 +118,39 @@ def main():
         except Exception as e:
             logger.error(f"Error during display operation for engine {display_engine_name}: {e}", exc_info=True)
 
+    merge_pairs = []
+    if 'suryaocr' in args.ocr_engines and 'tesseractocr' in args.ocr_engines:
+        merge_pairs.append(('suryaocr', 'tesseractocr')) # Define which pair to merge (Surya as A, Tesseract as B for WordMerger)
+
+    merger_config = {"iou_threshold": 0.5, "solo_confidence_threshold": 0.35, "prefer_engine_on_tie": "suryaocr"}
+
+
     combiner = OCRCombiner(
         engine_registry=engine_registry,
         engine_names=args.ocr_engines,
         document_parser=doc_parser,
         document_path=args.document_path,
-        lang_list=args.lang, # Pass the list of languages directly (e.g. ['en', 'ar'])
-        engine_configs=engine_configs
+        lang_list=args.lang,
+        engine_configs=engine_configs,
+        merge_engine_outputs=merge_pairs, # Pass the pairs
+        word_merger_config=merger_config   # Pass merger config
     )
 
-    logger.info("Starting OCR processing for all pages...")
-    # combined_ocr_text_per_page is List[List[str]] -> List of pages, each page is List of engine texts
-    combined_ocr_text_per_page = combiner.run_ocr_pipeline_parallel() 
+    logger.info("Starting OCR processing and merging for all pages...")
+    merged_structured_output_per_page = combiner.run_ocr_and_merge()
     
-    logger.info("Combined OCR text processing completed for all pages.")
-    if args.verbose >=2 and combined_ocr_text_per_page:
-        for i, page_data in enumerate(combined_ocr_text_per_page[:2]): # Log first 2 pages detail in debug
-            logger.debug(f"--- Combined OCR Page {i+1} ---")
-            for j, engine_text in enumerate(page_data):
-                logger.debug(f"  Engine {args.ocr_engines[j]}: {engine_text[:100]}...")
-    elif combined_ocr_text_per_page and combined_ocr_text_per_page[0]:
-         logger.info(f"Combined OCR Output (Page 1, Engine 1, first 100 chars): {combined_ocr_text_per_page[0][0][:100]}...")
+    final_texts_for_llm_or_output: List[str] = []
+    if merged_structured_output_per_page:
+        for page_idx, page_data in enumerate(merged_structured_output_per_page):
+            # Reassemble text for LLM or final string output
+            # You'll need a good line reconstruction logic here if needed
+            # For now, just join texts.
+            page_text = OCRCombiner.reassemble_text_from_structured(page_data)
+            final_texts_for_llm_or_output.append(page_text)
+            if args.verbose >=2:
+                logger.debug(f"--- Merged/Processed Page {page_idx+1} (for LLM/Output) ---\n{page_text[:200]}...")
 
-
+    combined_ocr_text_per_page = final_texts_for_llm_or_output
     final_processed_content: Any = combined_ocr_text_per_page 
 
     if args.use_llm:
