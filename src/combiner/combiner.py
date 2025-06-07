@@ -4,9 +4,9 @@ import logging
 from typing import Any, List, Dict, Type
 from PIL import Image
 
-from src.engines.IEngine import OCREngine
-from src.engines.EngineRegistry import EngineRegistry # To get engine classes
-from src.parsers.parser import DocumentParser
+from engines.IEngine import OCREngine
+from engines.EngineRegistry import EngineRegistry # To get engine classes
+from parsers.parser import DocumentParser
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class OCRCombiner:
             all_images:           A list of PIL Images to run OCR on (each thread gets its own copy).
             lang_list_for_engine:            List of language codes for the engine constructor.
             config:          Engine-specific config dict (e.g. tesseract parameters).
-            results_list:    A thread-safe dictionary to which we append:
+            results_dict:    A thread-safe dictionary to which we append:
                             {engine_name : [page_1_text, page_2_text, etc.]}
             engine_name:     A string key identifying this engine (must match self.engine_names).
         """
@@ -146,6 +146,9 @@ class OCRCombiner:
                     logger.warning(f"Missing or incomplete result for engine '{engine_name}' on page {page_idx + 1}. Using placeholder.")
                     page_texts.append(f"[ERROR: Result unavailable for {engine_name}, page {page_idx + 1}]")
             all_pages_outputs.append(page_texts)
-        
         logger.info("OCR pipeline completed. Results collated for all pages.")
+        # all_pages_outputs = [ [page_1_tess, page_2_surya], [page_1_tess, page_2_surya], ]
+        from combiner.wordMerger import WordMerger
+        wm = WordMerger()
+        merged_output = [ wm.merge_page_outputs(tesseract_items=page[1], surya_items=page[0]) for page in all_pages_outputs ]
         return all_pages_outputs

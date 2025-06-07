@@ -1,5 +1,5 @@
 import pytesseract
-from src.engines.IEngine import OCREngine
+from engines.IEngine import OCREngine
 from PIL import Image, ImageDraw, ImageFont
 import logging
 from typing import List, Dict, Any
