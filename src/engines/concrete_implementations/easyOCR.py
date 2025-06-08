@@ -1,5 +1,5 @@
 import easyocr
-from engines.IEngine import OCREngine
+from ..IEngine import OCREngine
 from PIL import Image, ImageDraw, ImageFont
 import cv2
 import numpy as np

@@ -4,7 +4,7 @@ from surya.detection import DetectionPredictor
 from surya.layout import LayoutPredictor # For more detailed layout if needed later
 import torch
 import os
-from engines.IEngine import OCREngine
+from ..IEngine import OCREngine
 from PIL import Image, ImageDraw, ImageFont
 import logging
 import numpy as np

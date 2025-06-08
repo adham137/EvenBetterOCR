@@ -4,9 +4,9 @@ import logging
 from typing import Any, List, Dict, Tuple, Type
 from PIL import Image
 
-from engines.IEngine import OCREngine
-from engines.EngineRegistry import EngineRegistry # To get engine classes
-from parsers.parser import DocumentParser
+from ..engines.IEngine import OCREngine
+from ..engines.EngineRegistry import EngineRegistry # To get engine classes
+from ..parsers.parser import DocumentParser
 
 from .wordMerger import WordMerger
 
