@@ -11,7 +11,7 @@ from src.main import run_ocr_processing, AVAILABLE_ENGINES
 app = Flask(__name__)
 
 # Configuration for file uploads
-UPLOAD_FOLDER = os.path.join(tempfile.gettempdir(), 'ocr_uploads')
+UPLOAD_FOLDER = os.path.join('./', 'ocr_uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB max upload size
@@ -85,19 +85,19 @@ def ocr_endpoint():
             ocr_result_text = run_ocr_processing(args_dict)
             del os.environ["FLASK_RUNNING"]
 
-            return jsonify({"status": "success", "ocr_output": ocr_result_text}), 200
+            return jsonify({"status": "success"}), 200
 
         except Exception as e:
             app.logger.error(f"Error during OCR processing: {e}", exc_info=True)
             return jsonify({"error": f"An internal error occurred: {str(e)}"}), 500
-        finally:
-            # Clean up the temporary file
-            if os.path.exists(temp_doc_path):
-                try:
-                    os.remove(temp_doc_path)
-                    app.logger.info(f"Temporary file {temp_doc_path} removed.")
-                except Exception as e_clean:
-                    app.logger.error(f"Error removing temporary file {temp_doc_path}: {e_clean}")
+        # finally:
+        #     # Clean up the temporary file
+        #     if os.path.exists(temp_doc_path):
+        #         try:
+        #             os.remove(temp_doc_path)
+        #             app.logger.info(f"Temporary file {temp_doc_path} removed.")
+        #         except Exception as e_clean:
+        #             app.logger.error(f"Error removing temporary file {temp_doc_path}: {e_clean}")
     else:
         return jsonify({"error": "File type not allowed"}), 400
 
