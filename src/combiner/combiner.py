@@ -330,7 +330,5 @@ class OCRCombiner:
             all_pages_outputs.append(page_texts)
         logger.info("OCR pipeline completed. Results collated for all pages.")
         # all_pages_outputs = [ [page_1_tess, page_2_surya], [page_1_tess, page_2_surya], ]
-        from combiner.wordMerger import WordMerger
-        wm = WordMerger()
-        merged_output = [ wm.merge_page_outputs(tesseract_items=page[1], surya_items=page[0]) for page in all_pages_outputs ]
+
         return all_pages_outputs

@@ -9,16 +9,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 class EasyOCREngine(OCREngine):
-    def __init__(self, lang: List[str], **kwargs):
-        super().__init__(lang, **kwargs)
+    def __init__(self, lang_list: List[str], **kwargs):
+        super().__init__(lang_list, **kwargs)
         try:
-            self.reader = easyocr.Reader(self.lang, **self.configs)
-            logger.info(f"EasyOCR engine initialized for languages: {self.lang}")
+            self.reader = easyocr.Reader(self.lang_list, **self.configs)
+            # logger.info(f"EasyOCR engine initialized for languages: {self.lang}")
         except Exception as e:
             logger.error(f"Failed to initialize EasyOCR engine: {e}")
             raise
 
-    def _raw_ocr(self, image: Image.Image) -> List[Dict[str, Any]]:
+    def _raw_ocr(self, images: Image.Image) -> List[Dict[str, Any]]:
         """
         Helper to get raw OCR output from EasyOCR.
 
@@ -44,7 +44,7 @@ class EasyOCREngine(OCREngine):
         return structured_results
 
  
-    def recognize_text(self, image: Image.Image) -> str:
+    def recognize_text(self, images: List[Image.Image]) -> List[str]:
         """
         Runs EasyOCR, then re-assembles its flat word list into lines by
         clustering on vertical position.  Inserts '\n' between inferred lines.
@@ -59,52 +59,55 @@ class EasyOCREngine(OCREngine):
             6. Finally, join lines with '\n'.
 
         Returns:
-            A single string containing recognized text, with '\n' between lines.
+            A List of single strings containing recognized text, with '\n' between lines.
         """
         logger.debug("EasyOCR: Starting text recognition.")
-        words = self._raw_ocr(image)
+        res = []
+        for image in images:
+          words = self._raw_ocr(image)
 
-        if not words:
-            return ""
+          if not words:
+              return ""
 
-        # 1) Sort tokens top→bottom, left→right
-        words.sort(key=lambda w: (w['bbox'][1], w['bbox'][0]))
+          # 1) Sort tokens top→bottom, left→right
+          words.sort(key=lambda w: (w['bbox'][1], w['bbox'][0]))
 
-        # 2) Estimate a threshold for “same line” as a fraction of median height
-        heights = [b[3] - b[1] for b in (w['bbox'] for w in words)]
-        median_h = float(np.median(heights))
-        line_thresh = max(1.0, median_h * 0.8)
+          # 2) Estimate a threshold for “same line” as a fraction of median height
+          heights = [b[3] - b[1] for b in (w['bbox'] for w in words)]
+          median_h = float(np.median(heights))
+          line_thresh = max(1.0, median_h * 0.8)
 
-        # 3) Group into lines
-        lines: List[List[Dict[str, Any]]] = []
-        current_line = [words[0]]
-        baseline = words[0]['bbox'][1]
+          # 3) Group into lines
+          lines: List[List[Dict[str, Any]]] = []
+          current_line = [words[0]]
+          baseline = words[0]['bbox'][1]
 
-        for w in words[1:]:
-            top_y = w['bbox'][1]
-            if abs(top_y - baseline) <= line_thresh:
-                current_line.append(w)
-                # optionally update baseline to average or keep first word’s top
-            else:
-                lines.append(current_line)
-                current_line = [w]
-                baseline = top_y
-        lines.append(current_line)
+          for w in words[1:]:
+              top_y = w['bbox'][1]
+              if abs(top_y - baseline) <= line_thresh:
+                  current_line.append(w)
+                  # optionally update baseline to average or keep first word’s top
+              else:
+                  lines.append(current_line)
+                  current_line = [w]
+                  baseline = top_y
+          lines.append(current_line)
 
-        # 4) Build the final text
-        line_strs: List[str] = []
-        for line in lines:
-            # sort each line by x-coordinate
-            line.sort(key=lambda w: w['bbox'][0])
-            texts = [w['text'] for w in line]
-            line_strs.append(" ".join(texts))
+          # 4) Build the final text
+          line_strs: List[str] = []
+          for line in lines:
+              # sort each line by x-coordinate
+              line.sort(key=lambda w: w['bbox'][0])
+              texts = [w['text'] for w in line]
+              line_strs.append(" ".join(texts))
 
-        full_text = "\n".join(line_strs)
-        logger.debug(f"EasyOCR: Recognized text (with newlines):\n{full_text[:200]}…")
-        return full_text
-    def get_structured_output(self, image: Image.Image) -> List[Dict[str, Any]]:
+          full_text = "\n".join(line_strs)
+          logger.debug(f"EasyOCR: Recognized text (with newlines):\n{full_text[:200]}…")
+          res.append(full_text)
+        return res
+    def get_structured_output(self, images: List[Image.Image]) -> List[List[Dict[str, Any]]]:
         logger.debug("EasyOCR: Getting structured output.")
-        return self._raw_ocr(image)
+        return [self._raw_ocr(image) for image in images]
 
     def _draw_on_image(self, image: Image.Image, structured_output: List[Dict[str, Any]], draw_text: bool = False):
         display_image = image.copy().convert("RGB")
