@@ -9,16 +9,20 @@ import logging
 logger = logging.getLogger(__name__)
 
 class EasyOCREngine(OCREngine):
-    def __init__(self, lang_list: List[str], **kwargs):
+    def __init__(self, lang_list: List[str], use_detector=True, **kwargs):
         super().__init__(lang_list, **kwargs)
         try:
-            self.reader = easyocr.Reader(self.lang_list, **self.configs)
+            self.use_detector = use_detector
+            if self.use_detector:
+                self.reader = easyocr.Reader(self.lang_list, **self.configs)
+            else:
+                self.reader = easyocr.Reader(self.lang_list, detector=False)
             # logger.info(f"EasyOCR engine initialized for languages: {self.lang}")
         except Exception as e:
             logger.error(f"Failed to initialize EasyOCR engine: {e}")
             raise
 
-    def _raw_ocr(self, images: Image.Image) -> List[Dict[str, Any]]:
+    def _raw_ocr(self, image: Image.Image) -> List[Dict[str, Any]]:
         """
         Helper to get raw OCR output from EasyOCR.
 
@@ -28,9 +32,14 @@ class EasyOCREngine(OCREngine):
             - 'text': the recognized string
             - 'confidence': float confidence
         """
-        img_np = np.array(image.convert("RGB"))
-        results = self.reader.readtext(img_np)  # [(bbox, text, conf), ...]
         
+        img_np = np.array(image.convert("RGB"))
+        results = []
+        if self.use_detector:
+            results = self.reader.readtext(img_np)  # [(bbox, text, conf), ...]
+        else:
+            results = self.reader.recognize(img_np)
+        # print(f"Anjax : {results}")
         structured_results = []
         for bbox_coords, text, conf in results:
             xs = [p[0] for p in bbox_coords]
@@ -38,12 +47,14 @@ class EasyOCREngine(OCREngine):
             x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
             structured_results.append({
                 'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                'text': text,
+                'text': text.strip(),
                 'confidence': conf
             })
         return structured_results
 
- 
+    # def _recognize_only(self, images: List[Image.Image]) -> List[str]:
+    #     return [self.reader.recognize(np.array(image.convert("RGB")) , paragraph=True) for image in images]
+        
     def recognize_text(self, images: List[Image.Image]) -> List[str]:
         """
         Runs EasyOCR, then re-assembles its flat word list into lines by
@@ -61,13 +72,16 @@ class EasyOCREngine(OCREngine):
         Returns:
             A List of single strings containing recognized text, with '\n' between lines.
         """
+        
         logger.debug("EasyOCR: Starting text recognition.")
+    
         res = []
+        
         for image in images:
           words = self._raw_ocr(image)
-
+          # print(f"WORDS: {words}")
           if not words:
-              return ""
+              continue
 
           # 1) Sort tokens top→bottom, left→right
           words.sort(key=lambda w: (w['bbox'][1], w['bbox'][0]))
@@ -112,7 +126,7 @@ class EasyOCREngine(OCREngine):
     def _draw_on_image(self, image: Image.Image, structured_output: List[Dict[str, Any]], draw_text: bool = False):
         display_image = image.copy().convert("RGB")
         draw = ImageDraw.Draw(display_image)
-        
+
         try:
             font = ImageFont.truetype("arial.ttf", 15)
         except IOError:
@@ -128,7 +142,7 @@ class EasyOCREngine(OCREngine):
                     bbox = draw.textbbox(text_position, text_to_draw, font=font)
                     draw.rectangle(bbox, fill="red")
                     draw.text(text_position, text_to_draw, fill="white", font=font)
-        
+
         display_image.show(title="EasyOCR Output")
 
 
