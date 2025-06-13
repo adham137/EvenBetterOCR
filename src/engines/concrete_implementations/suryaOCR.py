@@ -35,7 +35,7 @@ class SuryaOCREngine(OCREngine):
         except Exception as e:
             logger.error(f"Failed to initialize SuryaOCR engine: {e}")
             raise
-
+#
         
     def _get_text_detections(self, images: List[Image.Image]) -> List[List[Any]]: 
         with torch.no_grad(): 
