@@ -12,7 +12,7 @@ from src.engines.concrete_implementations.suryaOCR import SuryaOCREngine
 from src.parsers.parser import DocumentParser
 
 
-PDF_PATH = 'data\\alamiria_2003_88.pdf'
+PDF_PATH = 'data\\table_in_page_2.pdf'#'data\\alamiria_2003_88.pdf'
 parser = DocumentParser()
 images = parser.load_images_from_document(PDF_PATH)
 
@@ -27,11 +27,15 @@ images = parser.load_images_from_document(PDF_PATH)
 # eOCR.display_bounding_boxes(image_1)
 
 sOCR = SuryaOCREngine(['ar'])
-sOCR.recognize_text(images)
+# temp = sOCR.detect_text_lines_with_layout(images) ## Processing of 50 pages took appx 30 sec 
+sOCR.display_detected_text_lines(images[1])
+
+# sOCR.recognize_text(images)
 # sOCR.display_textline_boxes(images[1])
 # structured_output = sOCR.get_structured_output(images)
 # sOCR.display_annotated_output(images[1], structured_output[1])
 # sOCR.display_bounding_boxes(images[0], structured_output[0])
+
 
 # from database.app.repositories.document_repository import DocumentRepository
 # dr = DocumentRepository()
