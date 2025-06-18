@@ -14,7 +14,9 @@ from .engines.concrete_implementations.suryaOCR import SuryaOCREngine
 from .engines.concrete_implementations.tesseractOCR import TesseractOCREngine
 from .llm.clients.groq_client import GroqClient
 from .llm.llm_processor import LLMProcessor
+
 from PIL import Image
+
 
 # --- Logger Setup --- (Keep as is)
 logging.basicConfig(
@@ -22,7 +24,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler()]
 )
-logger = logging.getLogger("BetterOCR_Core") # Renamed for clarity if main.py is also run as script
+logger = logging.getLogger("EvenBetterOCR_Core") # Renamed for clarity if main.py is also run as script
 
 AVAILABLE_ENGINES = {
     # "easyocr": EasyOCREngine, # Keep commented if not default
@@ -43,7 +45,7 @@ def setup_global_logging_level(verbose_level: int):
         logging.getLogger().setLevel(logging.WARNING)
         logger.warning("Logging level set to WARNING.")
 
-def run_ocr_processing(args_dict: Dict[str, Any]) -> str:
+def run_ocr_processing(args_dict: Dict[str, Any]) -> List[str]:
     """
     Core OCR processing logic, taking arguments as a dictionary.
     Returns the final processed text as a string.
@@ -179,7 +181,8 @@ def run_ocr_processing(args_dict: Dict[str, Any]) -> str:
                     )
                     
                     if "[LLM_ERROR" not in raw_llm_response.upper():
-                        refined_page_text = llm_processor.parse_llm_output(raw_llm_response)
+                        # refined_page_text = llm_processor.parse_llm_output(raw_llm_response)
+                        refined_page_text = raw_llm_response            # got rid of json formatting
                         if "[LLM_PARSE_ERROR" in refined_page_text.upper():
                             logger.error(f"LLM parsing failed for Page {page_num}. Using raw LLM response. Details: {refined_page_text}")
                             final_processed_content_list.append(f"[LLM_REFINE_FAILED_PAGE_{page_num}_PARSE_ERROR: {raw_llm_response}]")
@@ -218,22 +221,9 @@ def run_ocr_processing(args_dict: Dict[str, Any]) -> str:
         else: # No content at all
             final_processed_content_list = []
 
-
-    # Construct final output string (all pages combined)
-    output_string_for_file = ""
-    if final_processed_content_list:
-        page_texts_for_output = []
-        for i, page_text_content in enumerate(final_processed_content_list):
-            header = f"\n--- Page {i+1} ---\n"
-            page_texts_for_output.append(header + page_text_content)
-        output_string_for_file = "\n".join(page_texts_for_output)
-    elif not final_processed_content_list and page_level_ocr_content is None: # No processing happened at all
-        output_string_for_file = "[No content processed or error in initial stages]"
-    else: # Empty list, but processing might have occurred
-        output_string_for_file = "[No text content extracted]"
         
     logger.info("Core OCR processing finished.")
-    return output_string_for_file
+    return final_processed_content_list
 
 
 def main_cli():

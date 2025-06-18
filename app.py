@@ -6,7 +6,8 @@ import logging
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 from src.main import run_ocr_processing, AVAILABLE_ENGINES
-
+from database.app.repositories.document_repository import DocumentRepository
+dr = DocumentRepository()
 
 app = Flask(__name__)
 
@@ -82,10 +83,11 @@ def ocr_endpoint():
             # Call the refactored processing function
             # Set an environment variable so main.py knows it's run by Flask (for display logic)
             os.environ["FLASK_RUNNING"] = "true"
-            ocr_result_text = run_ocr_processing(args_dict)
+            pages = run_ocr_processing(args_dict)
             del os.environ["FLASK_RUNNING"]
-
-            return jsonify({"status": "success"}), 200
+            res =  dr.insert_chunked_document(pages, temp_filename)
+            
+            return jsonify({"status": "success", "pages": res}), 200
 
         except Exception as e:
             app.logger.error(f"Error during OCR processing: {e}", exc_info=True)
@@ -98,6 +100,7 @@ def ocr_endpoint():
         #             app.logger.info(f"Temporary file {temp_doc_path} removed.")
         #         except Exception as e_clean:
         #             app.logger.error(f"Error removing temporary file {temp_doc_path}: {e_clean}")
+        
     else:
         return jsonify({"error": "File type not allowed"}), 400
 
@@ -109,4 +112,4 @@ if __name__ == '__main__':
         app.logger.addHandler(stream_handler)
         app.logger.setLevel(logging.INFO)
     app.logger.info(f"Temporary upload folder: {app.config['UPLOAD_FOLDER']}")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='localhost', port=5000)
