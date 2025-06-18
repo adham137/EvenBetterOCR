@@ -2,7 +2,10 @@
 
 import json
 import pprint
+from typing import List
 from PIL import Image
+import easyocr
+import numpy as np
 import torch
 from surya.recognition import RecognitionPredictor
 from surya.detection import DetectionPredictor
@@ -27,8 +30,33 @@ images = parser.load_images_from_document(PDF_PATH)
 # eOCR.display_bounding_boxes(image_1)
 
 sOCR = SuryaOCREngine(['ar'])
-# temp = sOCR.detect_text_lines_with_layout(images) ## Processing of 50 pages took appx 30 sec 
-sOCR.display_detected_text_lines(images[1])
+temp = sOCR.detect_text_lines_with_layout(images) ## Processing of 50 pages took appx 30 sec 
+#[
+#   // page_1
+#   [
+#       {
+#           bbox: [147, 137, 448, 152]
+#           label: 'PageHeader'
+#           confidence: 0.99
+#           text_line_confidence: 0.98
+#           position: 0
+#       },
+#       {obj_2}
+#   ],
+#   
+#   [page_2]
+#]
+list_og = [obj['bbox'] for obj in temp[0]]
+
+list_h = [[coord[0], coord[2], coord[1], coord[3]] for coord in list_og]
+# free_list is a list of free-form text boxes. The format is [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
+list_f = [ [ [coords[0], coords[1]], [coords[0], coords[3]], [coords[2], coords[3]], [coords[2], coords[1]]] for coords in list_og]
+
+reader = easyocr.Reader(['ar'], detector=False)
+img_np = np.array(images[0].convert("RGB"))
+eOCR = reader.recognize(img_np, horizontal_list=list_h, free_list= list_f)
+print(eOCR)
+# sOCR.display_detected_text_lines(images[1])
 
 # sOCR.recognize_text(images)
 # sOCR.display_textline_boxes(images[1])
