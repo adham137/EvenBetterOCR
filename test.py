@@ -19,7 +19,16 @@ PDF_PATH = 'data\\table_in_page_2.pdf'#'data\\alamiria_2003_88.pdf'
 parser = DocumentParser()
 images = parser.load_images_from_document(PDF_PATH)
 
+sOCR = SuryaOCREngine(['ar'])
+temp = sOCR.detect_text_lines_with_layout(images) ## Processing of 50 pages took appx 30 sec 
+
 # tesseractOCR = TesseractOCREngine(['ar'])
+# tesseract_recognized_pages = tesseractOCR.recognize_detected_lines(
+#     images,
+#     temp # Output from your Surya detector (or any other detector)
+# )
+# print(tesseract_recognized_pages)
+
 # out = tesseractOCR.recognize_text(images)
 # print('******************\n'.join([ page for page in out]))
 # tesseractOCR.display_bounding_boxes(images[0])
@@ -29,33 +38,46 @@ images = parser.load_images_from_document(PDF_PATH)
 # eOCR.display_annotated_output(image_1)
 # eOCR.display_bounding_boxes(image_1)
 
-sOCR = SuryaOCREngine(['ar'])
-temp = sOCR.detect_text_lines_with_layout(images) ## Processing of 50 pages took appx 30 sec 
-#[
+
+
+# temp =
+# [
 #   // page_1
 #   [
-#       {
+#       {   // obj_1
 #           bbox: [147, 137, 448, 152]
 #           label: 'PageHeader'
 #           confidence: 0.99
 #           text_line_confidence: 0.98
 #           position: 0
 #       },
-#       {obj_2}
+#       {obj_2}, ...
 #   ],
 #   
-#   [page_2]
+#   [page_2], ...
 #]
-list_og = [obj['bbox'] for obj in temp[0]]
 
-list_h = [[coord[0], coord[2], coord[1], coord[3]] for coord in list_og]
-# free_list is a list of free-form text boxes. The format is [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
-list_f = [ [ [coords[0], coords[1]], [coords[0], coords[3]], [coords[2], coords[3]], [coords[2], coords[1]]] for coords in list_og]
+t = sOCR.get_structured_output(images, input_detections = temp )
+print(t)
+# [
+#   // page_1
+#   [
+#       {   // obj_1
+#           bbox: [147, 137, 448, 152]
+#           label: 'PageHeader'
+#           confidence: 0.99
+#           text_line_confidence: 0.98
+#           position: 0
+#           text: '...'
+#           text_confidence: 0.97
+#       },
+#
+#       {obj_2} , ...
+#   ],
+#   
+#   [page_2] , ...
+#]
 
-reader = easyocr.Reader(['ar'], detector=False)
-img_np = np.array(images[0].convert("RGB"))
-eOCR = reader.recognize(img_np, horizontal_list=list_h, free_list= list_f)
-print(eOCR)
 # sOCR.display_detected_text_lines(images[1])
 
 # sOCR.recognize_text(images)

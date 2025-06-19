@@ -15,7 +15,7 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 # (Keep in mind that the detection + recognition models themselves take 2GB of vram)
 # (Keep in mind that the detection + layout models themselves take 0.7GB of vram)
 DETECTOR_BATCH_SIZE = 4      # Each batch takes 440mb of vram, calculate your own 
-RECOGNITION_BATCH_SIZE = 100 # Each batch takes 40mb of vram, calculate your own (Keep in mind that the models themselves take 2GB of vram)
+RECOGNITION_BATCH_SIZE = 15 # Each batch takes 40mb of vram, calculate your own (Keep in mind that the models themselves take 2GB of vram)
 LAYOUT_BATCH_SIZE = 8       # Each batch takes 220mb of vram, calculate your own (Keep in mind that the models themselves take 2GB of vram)
 # os.environ['LAYOUT_BATCH_SIZE']='16'
 
@@ -36,23 +36,6 @@ class SuryaOCREngine(OCREngine):
         self.layout_predictor = None 
         self.detection_predictor = None 
 
-        try:
-            # Always initialize detector and layout predictor
-            logger.info("Initializing Surya Detection Predictor...")
-            self.detection_predictor = DetectionPredictor(dtype=torch.float32) 
-            logger.info("Initializing Surya Layout Predictor...")
-            self.layout_predictor = LayoutPredictor(dtype=torch.float32) ## TODO: add appropriate batch size 
-            
-            if self.use_recognizer:
-                logger.info("Initializing Surya Recognition Predictor...")
-                self.recognition_predictor = RecognitionPredictor()
-            else:
-                logger.info("Surya Recognition Predictor will not be initialized.")
-            
-            logger.info("SuryaOCR engine component(s) initialized.")
-        except Exception as e:
-            logger.error(f"Failed to initialize SuryaOCR engine: {e}")
-            raise
         
     def _get_raw_text_line_detections(self, images: List[Image.Image]) -> List[Any]: 
         """Internal helper to get raw text line detections for a batch of images."""
@@ -119,27 +102,22 @@ class SuryaOCREngine(OCREngine):
 
         return all_pages_layout_data
 
-    #TODO: update to use the new workflow
-    def get_structured_output(self, images: List[Image.Image]) -> List[List[Dict[str, Any]]]:
+    def get_structured_output(self, images: List[Image.Image], input_detections: List[List[Dict[str, Any]]] ) -> List[List[Dict[str, Any]]]:
         logger.debug("SuryaOCR: Getting structured output.")
-        detections = self._get_text_detections(images)
+        # layout output must be given
         
-        pages = []
-        # words_dict = []
-        for page in detections:
-            words_dict = []
-            for line in page.text_lines:
-                if line.words:
-                    for word in line.words:
-                        if word.bbox_valid:
-                            words_dict.append({
-                                'bbox': word.bbox,
-                                'text': word.text,
-                                'confidence': word.confidence
-                            })
-            pages.append(words_dict)
-        logger.debug(f"SuryaOCR: Structured output generated with {len(pages)} pages.")
-        return pages
+        output_detections = input_detections.copy()
+
+        bboxes_only = [[item['bbox'] for item in page] for page in input_detections]
+
+        res = self._get_text_detections(images, bboxes_only)
+
+        for p, page in enumerate(res):
+            for l, line in enumerate(page.text_lines):
+                output_detections[p][l]['text'] = line.text
+                output_detections[p][l]['text_confidence'] = line.confidence
+
+        return output_detections
         
     def detect_text_lines_with_layout(
         self, 
@@ -162,6 +140,10 @@ class SuryaOCREngine(OCREngine):
             List of pages, each page a list of dictionaries:
             {'bbox': [text_line_x1, y1, x2, y2], 'label': layout_label, 'confidence': layout_confidence, 'position': layout_position_id}
         """
+        if not self.detection_predictor and not self.layout_predictor:
+            self.detection_predictor = DetectionPredictor(dtype=torch.float32) 
+            self.layout_predictor = LayoutPredictor(dtype=torch.float32)
+            
         if valid_layout_labels is None:
             valid_layout_labels = ['Text', 'SectionHeader', 'PageHeader', 'PageFooter', 
                                    'ListItem', 'Caption', 'Footnote', 'Title', 'TextInlineMath']
@@ -226,15 +208,32 @@ class SuryaOCREngine(OCREngine):
             page_filtered_text_lines.sort(key=lambda line: (line['position'], line['bbox'][1], line['bbox'][0]))
             final_pages_filtered_lines.append(page_filtered_text_lines)
 
-            if self.device.type == 'cuda':
-                torch.cuda.empty_cache()
+            self.detection_predictor = None
+            self.layout_predictor = None
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
 
         return final_pages_filtered_lines   
 
-    def _get_text_detections(self, images: List[Image.Image]) -> List[List[Any]]: 
-        with torch.no_grad(): 
-            predictions =   self.recognition_predictor([image.convert("RGB") for image in images], det_predictor=self.detection_predictor, return_words=True, detection_batch_size= DETECTOR_BATCH_SIZE, recognition_batch_size= RECOGNITION_BATCH_SIZE)   # Ensure RGB and return words
+    def _get_text_detections(self, images: List[Image.Image], bboxes: List[List[List[int]]] = None) -> List[List[Any]]:
+        if not self.recognition_predictor:
+            self.recognition_predictor = RecognitionPredictor(dtype=torch.float32)
+            
+        with torch.no_grad():
+            if not bboxes:
+                predictions = self.recognition_predictor([image.convert("RGB") for image in images], det_predictor=self.detection_predictor, return_words=True, detection_batch_size= DETECTOR_BATCH_SIZE, recognition_batch_size= RECOGNITION_BATCH_SIZE)   # Ensure RGB and return words
+            else:
+                predictions = self.recognition_predictor([image.convert("RGB") for image in images], bboxes=bboxes, recognition_batch_size= RECOGNITION_BATCH_SIZE)   
+            
+            self.recognition_predictor = None
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+
         if len(predictions) and hasattr(predictions[0], 'text_lines'):
+
+            # print(predictions)
             return predictions                 # return a list of predictions (one for each page)
         return []
     
