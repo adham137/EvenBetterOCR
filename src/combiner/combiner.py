@@ -1,334 +1,255 @@
+# src/combiner/combiner.py
 
 import threading
 import logging
-from typing import Any, List, Dict, Tuple, Type
+from typing import Any, List, Dict, Tuple, Type, Optional
 from PIL import Image
 
+# Assuming correct relative imports for your project structure
 from ..engines.IEngine import OCREngine
-from ..engines.EngineRegistry import EngineRegistry # To get engine classes
+from ..engines.EngineRegistry import EngineRegistry
 from ..parsers.parser import DocumentParser
+# Ensure this is your latest merger class (LineROVERMerger or LineROVERMerger)
+from .lineMerger import LineROVERMerger # Or your chosen name (e.g. LineROVERMerger)
 
-from .lineMerger import WordMerger
+# Import specific engine classes if needed for type hinting or direct instantiation (though registry is preferred)
+from ..engines.concrete_implementations.suryaOCR import SuryaOCREngine
+from ..engines.concrete_implementations.tesseractOCR import TesseractOCREngine
+
 
 logger = logging.getLogger(__name__)
 
 class OCRCombiner:
-    def __init__(self, 
+    def __init__(self,
                  engine_registry: EngineRegistry,
-                 engine_names: List[str],
                  document_parser: DocumentParser,
                  document_path: str,
-                 lang_list: List[str], 
+                 lang_list: List[str],
+                 # Engine used for initial layout/text line detection
+                 detector_engine_name: str = 'suryaocr', # Default to Surya for detection
+                 # Engines used for recognition on detected lines
+                 recognizer_engine_names: Optional[List[str]] = None,
                  engine_configs: Dict[str, Dict] = None,
-                 merge_engine_outputs: List[Tuple[str, str]] = None, # e.g., [('suryaocr', 'tesseractocr')]
-                 word_merger_config: Dict[str, Any] = None): # Config for WordMerger
-        """
-        Initializes the OCRCombiner.
-        Args:
-            engine_registry:        Instance of EngineRegistry to fetch engine classes.
-            engine_names:           List of names of OCR engines to use (e.g., ["easyocr", "tesseractocr"]).
-            document_parser:        Instance of DocumentParser.
-            document_path:          Path to the document to be processed.
-            lang:                   List of language codes for OCR engines.
-            engine_configs:         Optional dictionary with specific configurations for each engine.
-                                    Format: {"engine_name": {"param1": "value1", ...}}
-            merge_engine_outputs:   Which engines to merge together e.g., [('suryaocr', 'tesseractocr')]
-            word_merger_config:     Config for WordMerger
-        """
+                 # For merging recognizer outputs
+                 merge_recognizer_outputs_pair: Optional[Tuple[str, str]] = None, # e.g., ('suryaocr', 'tesseractocr')
+                 line_merger_config: Dict[str, Any] = None): # Config for LineROVERMerger
+
         self.engine_registry = engine_registry
-        self.engine_names = engine_names
         self.document_parser = document_parser
         self.document_path = document_path
         self.lang_list = lang_list
         self.engine_configs = engine_configs if engine_configs else {}
-        
-        self.merge_engine_outputs = merge_engine_outputs if merge_engine_outputs else []
-        self.word_merger = None
-        if self.merge_engine_outputs:
-            merger_cfg = word_merger_config if word_merger_config else {}
-            self.word_merger = WordMerger(**merger_cfg)
-            logger.info(f"WordMerger initialized to merge pairs: {self.merge_engine_outputs}")
 
-        logger.info(f"OCRCombiner initialized for engines: {engine_names} on document: {document_path}")
+        self.detector_engine_name = detector_engine_name
+        # If recognizer_engine_names are not provided, assume all registered engines (excluding detector if same)
+        # or make it a requirement. For now, let's assume they are distinct or handled.
+        self.recognizer_engine_names = recognizer_engine_names if recognizer_engine_names else []
 
-########################################################################################### WORD MERGING PART ###########################################################################################
-    def run_ocr_pipeline_parallel_structured(self) -> Dict[str, List[List[Dict[str, Any]]]]:
+        self.merge_recognizer_outputs_pair = merge_recognizer_outputs_pair
+        self.line_merger: Optional[LineROVERMerger] = None # Type hint for clarity
+        if self.merge_recognizer_outputs_pair and len(self.recognizer_engine_names) >= 2:
+            merger_cfg = line_merger_config if line_merger_config else {}
+            # Ensure LineROVERMerger (or your chosen class name) is correctly imported
+            self.line_merger = LineROVERMerger(lang=self.lang_list[0] if self.lang_list else "ar", **merger_cfg) # Pass lang
+            logger.info(f"LineROVERMerger initialized to merge pair: {self.merge_recognizer_outputs_pair} with config: {merger_cfg}")
+        elif self.merge_recognizer_outputs_pair:
+             logger.warning("Merge pair specified, but not enough recognizer engines to merge.")
+
+
+        logger.info(f"OCRCombiner initialized. Detector: {self.detector_engine_name}, Recognizers: {self.recognizer_engine_names}, Document: {document_path}")
+
+
+    def _run_recognition_on_detected_lines(
+        self,
+        engine_name: str, # Name of the recognizer engine
+        full_page_images: List[Image.Image], # List of original full page images
+        all_pages_detected_lines_info: List[List[Dict[str, Any]]],
+        output_recognition_results_map: Dict[str, List[List[Dict[str, Any]]]]
+    ):
         """
-        Processes the document using multiple OCR engines in parallel, fetching STRUCTURED output.
-        Returns:
-            A dictionary mapping engine_name to its list of structured outputs per page.
-            {
-                "suryaocr": [ [{'bbox':..., 'text':..., 'confidence':...}, ...], # Page 1 for Surya
-                              [{'bbox':..., 'text':..., 'confidence':...}, ...]  # Page 2 for Surya
-                            ],
-                "tesseractocr": [ [...], [...] ]
-            }
+        Target function for a thread. Runs one OCR RECOGNITION engine on pre-detected lines.
         """
-        logger.info(f"Starting STRUCTURED OCR pipeline for document: {self.document_path}")
+        try:
+            recognizer_engine_class = self.engine_registry.get_engine_class(engine_name)
+            recognizer_config = self.engine_configs.get(engine_name, {})
+
+
+            recognizer_instance = recognizer_engine_class(lang_list=self.lang_list, **recognizer_config)
+            logger.info(f"[{engine_name}] Starting RECOGNITION on detected lines for {len(full_page_images)} pages.")
+
+            #TODO: Unify the calling function for the OCR engines
+
+            # Check if the engine has a dedicated 'recognize_detected_lines' or similar method
+            if engine_name == 'tesseractocr' and hasattr(recognizer_instance, 'recognize_detected_lines') and callable(getattr(recognizer_instance, 'recognize_detected_lines')):
+                # This is the preferred method for TesseractOCREngine
+                recognized_pages_data = recognizer_instance.recognize_detected_lines(
+                    full_page_images,
+                    all_pages_detected_lines_info
+                )
+            elif engine_name == 'suryaocr' and hasattr(recognizer_instance, 'get_structured_output') and callable(getattr(recognizer_instance, 'get_structured_output')):
+                # This is the preferred method for SuryaOCREngine
+                recognized_pages_data = recognizer_instance.get_structured_output(
+                    full_page_images,
+                    input_detections=all_pages_detected_lines_info # Pass detected lines
+                )
+            else:
+                logger.error(f"Engine {engine_name} does not have a suitable method for recognizing pre-detected lines.")
+                raise NotImplementedError(f"{engine_name} cannot recognize pre-detected lines.")
+
+            output_recognition_results_map[engine_name] = recognized_pages_data
+            logger.info(f"[{engine_name}] Finished RECOGNITION; {len(recognized_pages_data)} pages processed.")
+
+        except Exception as e:
+            logger.error(f"[{engine_name}] Error during RECOGNITION: {e}", exc_info=True)
+            # Populate with error placeholders for all pages, preserving structure
+            error_output_for_page = [{
+                'bbox': line_info.get('bbox'), 'label': line_info.get('label', '[ERROR]'),
+                'text': f"[ERROR_RECOGNITION: {engine_name} failed – {e}]",
+                'text_confidence': 0.0
+            } for line_info in (all_pages_detected_lines_info[0] if all_pages_detected_lines_info else [{'bbox':[]}])] # Use first page structure as template
+            
+            output_recognition_results_map[engine_name] = [error_output_for_page for _ in all_pages_detected_lines_info]
+
+
+    def run_detection_then_parallel_recognition_and_merge(self) -> List[List[Dict[str, Any]]]:
+        """
+        Main pipeline:
+        1. Load images.
+        2. Run initial detection (layout + text lines) using the detector_engine.
+        3. Run specified recognizer_engines IN PARALLEL on these detected lines.
+        4. Merge outputs of two specified recognizer engines.
+        5. Fallback if merging not possible or not enough engines.
+        """
+        logger.info("Starting New Pipeline: Detection -> Parallel Recognition -> Merge")
+
+        # 1. Load Images
         try:
             all_document_images = self.document_parser.load_images_from_document(self.document_path)
         except Exception as e:
             logger.error(f"Failed to load document pages: {e}")
-            # Return a structure indicating error for all requested engines
-            error_page_struct = [{'bbox': [], 'text': f"[ERROR: Failed to load document – {e}]", 'confidence': 0}]
-            return {name: [[error_page_struct]] for name in self.engine_names}
-
-
+            return [[{'text': f"[ERROR: Failed to load document – {e}]", 'confidence': 0}]] # Single page error
         if not all_document_images:
             logger.warning("No images found in document.")
-            error_page_struct = [{'bbox': [], 'text': "[ERROR: No images to process]", 'confidence': 0}]
-            return {name: [[error_page_struct]] for name in self.engine_names}
-
+            return []
         num_pages = len(all_document_images)
         logger.info(f"Document loaded with {num_pages} pages.")
 
-        # engine_name -> List_of_pages, where each page is List_of_word_dicts
-        engine_structured_results_map: Dict[str, List[List[Dict[str, Any]]]] = {name: [] for name in self.engine_names}
+        # 2. Initial Detection (using detector_engine, e.g., SuryaOCREngine)
+        try:
+            detector_class = self.engine_registry.get_engine_class(self.detector_engine_name)
+            detector_config = self.engine_configs.get(self.detector_engine_name, {})
+            if self.detector_engine_name == 'suryaocr' and 'use_recognizer' not in detector_config:
+                 detector_config['use_recognizer'] = False
+            
+            detector_instance = detector_class(lang_list=self.lang_list, **detector_config)
+
+            if not hasattr(detector_instance, 'detect_text_lines_with_layout'):
+                logger.error(f"Detector engine {self.detector_engine_name} does not have 'detect_text_lines_with_layout' method.")
+                raise NotImplementedError("Detector engine misconfigured for line detection.")
+            
+            logger.info(f"Running detection using {self.detector_engine_name}...")
+            all_pages_detected_lines_info = detector_instance.detect_text_lines_with_layout(all_document_images)
+            logger.info(f"Detection complete. Found lines for {len(all_pages_detected_lines_info)} pages.")
+
+        except Exception as e:
+            logger.error(f"Error during detection phase with {self.detector_engine_name}: {e}", exc_info=True)
+            return [[{'text': f"[ERROR: Detection failed - {e}]", 'confidence': 0} for _ in range(num_pages)]]
+
+
+        # 3. Parallel Recognition
+        # RecognizedLineDict: {'bbox':..., 'label':..., 'text':..., 'text_confidence':..., 'words':...}
+        recognition_results_map: Dict[str, List[List[Dict[str, Any]]]] = {}
         threads: List[threading.Thread] = []
 
+        if not self.recognizer_engine_names:
+            logger.warning("No recognizer engines specified. Returning detected lines without text recognition.")
+            # We could return all_pages_detected_lines_info here, but the expected output is recognized lines.
+            # For now, return empty or error.
+            return [[{'text': "[NO_RECOGNIZERS_CONFIGURED]", 'confidence':0.0}] for _ in range(num_pages)]
 
-        # Corrected threading logic:
-        # Each thread will compute all pages for ONE engine and store it in engine_structured_results_map[engine_name]
-        def thread_target_per_engine(engine_cls, images, lang_list, cfg, engine_name_key, output_map):
+
+        for rec_engine_name in self.recognizer_engine_names:
+            if not all_pages_detected_lines_info and num_pages > 0: # If detection yielded nothing for any page
+                 logger.warning(f"No lines detected by {self.detector_engine_name}, cannot run recognizer {rec_engine_name}.")
+                 recognition_results_map[rec_engine_name] = [[] for _ in range(num_pages)] # Empty results for this engine
+                 continue
+
             try:
-                engine_instance = engine_cls(lang_list=lang_list, **cfg)
-                logger.info(f"[{engine_name_key}] Starting OCR for structured output on {len(images)} image(s)…")
-                structured_outputs_all_pages = engine_instance.get_structured_output(images)
-                output_map[engine_name_key] = structured_outputs_all_pages
-                logger.info(f"[{engine_name_key}] Finished structured OCR; {len(structured_outputs_all_pages)} pages processed.")
-            except Exception as e:
-                logger.error(f"[{engine_name_key}] Error during structured OCR: {e}", exc_info=True)
-                error_output = [{'bbox': [], 'text': f"[ERROR: {engine_name_key} failed – {e}]", 'confidence': 0}]
-                output_map[engine_name_key] = [[error_output] for _ in range(len(images))]
-
-
-        for engine_name in self.engine_names:
-            try:
-                engine_cls = self.engine_registry.get_engine_class(engine_name)
-                cfg = self.engine_configs.get(engine_name, {})
-
                 t = threading.Thread(
-                    target=thread_target_per_engine,
-                    args=(engine_cls, all_document_images, self.lang_list, cfg,
-                          engine_name, engine_structured_results_map)
+                    target=self._run_recognition_on_detected_lines,
+                    args=(rec_engine_name, all_document_images, all_pages_detected_lines_info,
+                          recognition_results_map)
                 )
                 threads.append(t)
                 t.start()
-                logger.debug(f"Started thread for {engine_name} (structured) to process all {num_pages} pages.")
+                logger.debug(f"Started RECOGNITION thread for {rec_engine_name}.")
             except Exception as e:
-                logger.error(f"Could not start structured OCR thread for '{engine_name}': {e}", exc_info=True)
-                error_output = [{'bbox': [], 'text': f"[ERROR: Could not start thread for {engine_name} – {e}]", 'confidence': 0}]
-                engine_structured_results_map[engine_name] = [[error_output] for _ in range(num_pages)]
+                logger.error(f"Could not start RECOGNITION thread for '{rec_engine_name}': {e}", exc_info=True)
+                recognition_results_map[rec_engine_name] = [[{'text':f"[ERROR_THREAD_START_RECO:{e}]"}] for _ in range(num_pages)]
+
 
         for t in threads:
             t.join()
-        logger.info(f"All engine threads (structured) finished processing all pages.")
-        return engine_structured_results_map
+        logger.info(f"All RECOGNITION engine threads finished.")
 
+        # 4. Merge Recognizer Outputs (if configured)
+        final_document_output: List[List[Dict[str, Any]]]
 
-    def run_ocr_and_merge(self) -> List[List[Dict[str, Any]]]: # Returns list of pages, each page is a list of merged word dicts
-        """
-        Runs the OCR pipeline, fetches structured outputs, and merges specified pairs.
-        Falls back to a primary engine if merging isn't specified or possible for a pair.
-        """
-        # 1. Get structured output from all engines
-        #    This returns: {'suryaocr': [page1_struct, page2_struct,...], 'tesseractocr': [page1_struct, ...]}
-        all_engine_structured_outputs = self.run_ocr_pipeline_parallel_structured()
+        if self.line_merger and self.merge_recognizer_outputs_pair and \
+           self.merge_recognizer_outputs_pair[0] in recognition_results_map and \
+           self.merge_recognizer_outputs_pair[1] in recognition_results_map:
+            
+            engine_A_name, engine_B_name = self.merge_recognizer_outputs_pair
+            logger.info(f"Merging outputs from {engine_A_name} and {engine_B_name}...")
+            
+            doc_results_A = recognition_results_map[engine_A_name]
+            doc_results_B = recognition_results_map[engine_B_name]
 
-        num_pages = 0
-        if self.engine_names and all_engine_structured_outputs.get(self.engine_names[0]):
-            num_pages = len(all_engine_structured_outputs[self.engine_names[0]])
+            # Ensure both results have the same number of pages as detected_lines_info
+            if len(doc_results_A) != num_pages or len(doc_results_B) != num_pages:
+                logger.error(f"Page count mismatch after recognition. A:{len(doc_results_A)}, B:{len(doc_results_B)}, Expected:{num_pages}. Cannot merge reliably.")
+                # Fallback: Pick one engine's results or error.
+                fallback_rec_name = self.recognizer_engine_names[0]
+                final_document_output = recognition_results_map.get(fallback_rec_name, [[{'text': "[MERGE_PAGE_COUNT_ERROR]"}] for _ in range(num_pages)])
+            else:
+                final_document_output = self.line_merger.merge_document_results(
+                    doc_results_A, doc_results_B, engine_A_name, engine_B_name
+                )
+                logger.info("Merging complete.")
+        else:
+            # Fallback: No merger, or specified engines for merging not available/recognized.
+            # Use results from the first available recognizer, or just the detected lines structure if no recognizers ran.
+            if self.recognizer_engine_names:
+                primary_recognizer_name = self.recognizer_engine_names[0]
+                if primary_recognizer_name in recognition_results_map:
+                    logger.info(f"No merge performed or merge pair not fully available. Using results from primary recognizer: {primary_recognizer_name}")
+                    final_document_output = recognition_results_map[primary_recognizer_name]
+                else:
+                    logger.warning(f"Primary recognizer {primary_recognizer_name} results not found. Returning empty or detected lines.")
+                    # Return structure of detected lines but with error text for recognition
+                    final_document_output = [[{**line_info, 'text':'[PRIMARY_RECO_FAILED]', 'text_confidence':0.0} for line_info in page_lines] for page_lines in all_pages_detected_lines_info] if all_pages_detected_lines_info else [[] for _ in range(num_pages)]
+            else: # No recognizers ran at all
+                logger.warning("No recognizers ran. Output will be based on detected lines structure without text.")
+                final_document_output = [[{**line_info, 'text':'[NO_RECOGNITION]', 'text_confidence':0.0} for line_info in page_lines] for page_lines in all_pages_detected_lines_info] if all_pages_detected_lines_info else [[] for _ in range(num_pages)]
         
-        if num_pages == 0:
-            logger.warning("No pages found or processed, cannot merge.")
-            return []
+        return final_document_output
 
-        final_merged_pages: List[List[Dict[str, Any]]] = []
-
-        # For now, let's assume one merge pair, e.g., ('suryaocr', 'tesseractocr')
-        # suryaocr is the primary to fallback to.
-        primary_engine_for_fallback = 'suryaocr' # Configurable later
-        if primary_engine_for_fallback not in self.engine_names:
-            primary_engine_for_fallback = self.engine_names[0] if self.engine_names else None
-
-
-        for page_idx in range(num_pages):
-            page_merged_output = None
-            merged_this_page = False
-
-            if self.word_merger and self.merge_engine_outputs:
-                # Assuming the first pair in merge_engine_outputs for now
-                engine1_name, engine2_name = self.merge_engine_outputs[0]
-
-                if engine1_name in all_engine_structured_outputs and engine2_name in all_engine_structured_outputs:
-                    items1 = all_engine_structured_outputs[engine1_name][page_idx]
-                    items2 = all_engine_structured_outputs[engine2_name][page_idx]
-                    
-                    # Ensure items are not error strings before passing to merger
-                    valid_items1 = isinstance(items1, list) and all(isinstance(item, dict) for item in items1)
-                    valid_items2 = isinstance(items2, list) and all(isinstance(item, dict) for item in items2)
-
-                    if not valid_items1:
-                        logger.warning(f"Page {page_idx+1}: Invalid structured data for {engine1_name}, using fallback or empty.")
-                        items1 = []
-                    if not valid_items2:
-                        logger.warning(f"Page {page_idx+1}: Invalid structured data for {engine2_name}, using fallback or empty.")
-                        items2 = []
-                    page_merged_output = self.word_merger.merge_page_outputs(items1, engine1_name, items2, engine2_name)
-                    merged_this_page = True
-
-                else:
-                    logger.warning(f"Page {page_idx+1}: One or both engines for merging ({engine1_name}, {engine2_name}) not found in results. Falling back.")
-            
-            if not merged_this_page:
-                if primary_engine_for_fallback and primary_engine_for_fallback in all_engine_structured_outputs:
-                    logger.info(f"Page {page_idx+1}: Using fallback engine '{primary_engine_for_fallback}'.")
-                    fallback_data = all_engine_structured_outputs[primary_engine_for_fallback][page_idx]
-                    if isinstance(fallback_data, list) and all(isinstance(item, dict) for item in fallback_data):
-                         page_merged_output = fallback_data
-                    else:
-                         page_merged_output = [{'bbox': [], 'text': f"[ERROR: Invalid fallback data for {primary_engine_for_fallback}]", 'confidence': 0}]
-                else:
-                    logger.warning(f"Page {page_idx+1}: No merge happened and no primary fallback engine available or its data is missing.")
-                    page_merged_output = [{'bbox': [], 'text': "[ERROR: No data after merge/fallback attempts]", 'confidence': 0}]
-            
-            final_merged_pages.append(page_merged_output)
-
-        logger.info("Structured OCR and merging pipeline completed.")
-        return final_merged_pages
 
     @staticmethod
-    def reassemble_text_from_structured(structured_page_output: List[Dict[str, Any]], line_break_char='\n', word_separator=' ') -> str:
-        """
-        Reassembles a full text string from a list of word/block dictionaries.
-        This is a basic implementation; more sophisticated line/paragraph reconstruction might be needed.
-        Assumes items are somewhat sorted (e.g., top-to-bottom, left-to-right).
-        """
-        if not structured_page_output or not isinstance(structured_page_output[0], dict):
-            # Handle cases where it might be an error string or improperly formatted
-            if isinstance(structured_page_output, list) and structured_page_output and isinstance(structured_page_output[0], str): # list of strings
-                return structured_page_output[0] # if it's an error string in a list
-            if isinstance(structured_page_output, str): # if it's just an error string
-                return structured_page_output
-            return ""
-
-        # Basic approach: join all texts. A better way would be to sort by y then x, and infer lines.
-        # For simplicity now, just join.
-        # This will be used if LLM needs a single string input after merging.
-        texts = [item.get('text', '') for item in structured_page_output if isinstance(item, dict) and item.get('text')]
-        return word_separator.join(texts) # This doesn't preserve lines well.
-########################################################################################### WORD MERGING PART ###########################################################################################
-
-    def _run_engine_on_all_images(
-        self,
-        engine_class: Type[OCREngine],
-        all_images: List[Image.Image],
-        lang_list_for_engine: List[str],
-        config: Dict[str, Any],
-        results_dict: Dict[str, List[str]], # engine_name -> list of texts (one per page)
-        engine_name: str
-    ) -> None:
-        """
-        Target function for a thread. Runs one OCR engine on ALL images (document pages)
-        and stores its list of recognized texts (or error placeholders) into a shared dictionary.
-
-        Parameters:
-            engine_class:    The OCR engine class to instantiate.
-            all_images:           A list of PIL Images to run OCR on (each thread gets its own copy).
-            lang_list_for_engine:            List of language codes for the engine constructor.
-            config:          Engine-specific config dict (e.g. tesseract parameters).
-            results_dict:    A thread-safe dictionary to which we append:
-                            {engine_name : [page_1_text, page_2_text, etc.]}
-            engine_name:     A string key identifying this engine (must match self.engine_names).
-        """
-        try:
-            engine_instance = engine_class(lang_list=lang_list_for_engine, **config)
-            logger.info(f"[{engine_name}] Starting OCR on image(s)…")
-            text_outputs = engine_instance.recognize_text(all_images)
-            results_dict[engine_name] = text_outputs
-            logger.info(f"[{engine_name}] Finished OCR; Number of pages processed= {len(all_images)}")
-        except Exception as e:
-            logger.error(f"[{engine_name}] Error during OCR: {e}")
-            results_dict[engine_name] = [f"[ERROR: {engine_name} failed – {e}]" for _ in range(len(all_images))]
-
-
-    def run_ocr_pipeline_parallel(self) -> List[List[str]]:
-        """
-        Processes the document using multiple OCR engines in parallel. Each engine
-        processes all pages of the document. The results are then collated page by page.
-
-        Returns:
-            List of pages, where each page is itself a list of strings:
-                [
-                [  # page 1
-                    text_from_engine_0_on_page_1,
-                    text_from_engine_1_on_page_1,
-                    ...
-                ],
-                [  # page 2
-                    text_from_engine_0_on_page_2,
-                    text_from_engine_1_on_page_2,
-                    ...
-                ],
-                ...
-                ]
-
-        Notes:
-            - The inner list is ordered exactly as `self.engine_names`.
-            - Any engine that fails to initialize, start, or recognize will contribute
-            a single string of the form "[ERROR: <engine_name> ...]".
-        """
-        logger.info(f"Starting OCR pipeline for document: {self.document_path}")
-
-        try:
-            all_document_images = self.document_parser.load_images_from_document(self.document_path)
-        except Exception as e:
-            logger.error(f"Failed to load document pages: {e}")
-            return [[f"[ERROR: Failed to load document – {e}]"]]
-
-        if not all_document_images:
-            logger.warning("No images found in document.")
-            return [["[ERROR: No images to process]"]]
+    def reassemble_text_from_structured(structured_page_output: List[Dict[str, Any]],
+                                         line_break_char='\n', word_separator=' ') -> str:
+        # This method now takes a list of recognized line dicts for a single page
+        if not structured_page_output: return ""
         
-        num_pages = len(all_document_images)
-        logger.info(f"Document loaded with {num_pages} pages.")
+        # Lines are assumed to be somewhat in reading order due to `position` sorting earlier.
+        # Each dict in structured_page_output is a line.
+        page_text = ""
+        for i, line_item in enumerate(structured_page_output):
+            if isinstance(line_item, dict) and line_item.get('text'):
+                page_text += line_item['text']
+                if i < len(structured_page_output) - 1: # Add newline if not the last line
+                    page_text += line_break_char
+            elif isinstance(line_item, str): # Handle error strings directly
+                page_text += line_item + line_break_char
 
-        engine_results_map: Dict[str, List[str]] = {} # engine_name -> List[text_for_page_i]
-        threads: List[threading.Thread] = []
-
-        for engine_name in self.engine_names:
-            try:
-                engine_cls = self.engine_registry.get_engine_class(engine_name)
-                cfg = self.engine_configs.get(engine_name, {})
-                
-                t = threading.Thread(
-                    target=self._run_engine_on_all_images,
-                    args=(engine_cls, all_document_images, self.lang_list, cfg, # Pass self.lang_list
-                          engine_results_map, engine_name)
-                )
-                threads.append(t)
-                t.start()
-                logger.debug(f"Started thread for {engine_name} to process all {num_pages} pages.")
-            except Exception as e:
-                logger.error(f"Could not start OCR thread for '{engine_name}': {e}", exc_info=True)
-                engine_results_map[engine_name] = [f"[ERROR: Could not start thread for {engine_name} – {e}]" for _ in range(num_pages)]
-
-        for t in threads:
-            t.join()
-        logger.info(f"All engine threads finished processing all pages.")
-
-        all_pages_outputs: List[List[str]] = []
-        for page_idx in range(num_pages):
-            page_texts: List[str] = []
-            for engine_name in self.engine_names: # Ensure consistent order based on self.engine_names
-                engine_page_results_list = engine_results_map.get(engine_name)
-                if engine_page_results_list and page_idx < len(engine_page_results_list):
-                    page_texts.append(engine_page_results_list[page_idx])
-                else:
-                    logger.warning(f"Missing or incomplete result for engine '{engine_name}' on page {page_idx + 1}. Using placeholder.")
-                    page_texts.append(f"[ERROR: Result unavailable for {engine_name}, page {page_idx + 1}]")
-            all_pages_outputs.append(page_texts)
-        logger.info("OCR pipeline completed. Results collated for all pages.")
-        # all_pages_outputs = [ [page_1_tess, page_2_surya], [page_1_tess, page_2_surya], ]
-
-        return all_pages_outputs
+        return page_text.strip()

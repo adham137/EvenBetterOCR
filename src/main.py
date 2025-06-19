@@ -2,36 +2,36 @@ import argparse
 import json
 import logging
 import os
-from typing import Any, List, Dict, Optional # Added Optional
-import tempfile # For handling temporary files if needed by Flask part later
-import uuid # For unique temporary file names
+from typing import Any, List, Dict, Optional 
+import tempfile 
+import uuid 
+
 
 from .parsers.parser import DocumentParser
-from .combiner.combiner import OCRCombiner # Assuming combiner.py is in the same directory or PYTHONPATH
+from .combiner.combiner import OCRCombiner
 from .engines.EngineRegistry import EngineRegistry
 from .engines.concrete_implementations.easyOCR import EasyOCREngine # Keep if you might re-add
 from .engines.concrete_implementations.suryaOCR import SuryaOCREngine
 from .engines.concrete_implementations.tesseractOCR import TesseractOCREngine
 from .llm.clients.groq_client import GroqClient
 from .llm.llm_processor import LLMProcessor
-from PIL import Image
+from PIL import Image # Keep for display logic or if engines need it explicitly
 
-# --- Logger Setup --- (Keep as is)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler()]
 )
-logger = logging.getLogger("BetterOCR_Core") # Renamed for clarity if main.py is also run as script
+logger = logging.getLogger("BetterOCR_Core")
 
 AVAILABLE_ENGINES = {
-    # "easyocr": EasyOCREngine, # Keep commented if not default
+    # "easyocr": EasyOCREngine,
     "suryaocr": SuryaOCREngine,
     "tesseractocr": TesseractOCREngine
 }
+DEFAULT_DETECTOR_ENGINE = 'suryaocr' 
 
 def setup_global_logging_level(verbose_level: int):
-    # (Keep as is)
     if verbose_level == 1:
         logging.getLogger().setLevel(logging.INFO)
         logger.info("Logging level set to INFO.")
@@ -52,10 +52,11 @@ def run_ocr_processing(args_dict: Dict[str, Any]) -> str:
     logger.info(f"Core processing started with effective arguments: {args_dict}")
 
     engine_registry = EngineRegistry()
-    # Ensure AVAILABLE_ENGINES is accessible or passed if this function moves file
+    # User-selected engines will now primarily be for recognition if new pipeline is used
+    user_selected_engines = args_dict.get("ocr_engines", [])
+    
     for name, cls in AVAILABLE_ENGINES.items():
-        if name in args_dict.get("ocr_engines", []):
-            engine_registry.register_engine(name, cls)
+        engine_registry.register_engine(name, cls)
 
     doc_parser = DocumentParser()
 
@@ -69,256 +70,262 @@ def run_ocr_processing(args_dict: Dict[str, Any]) -> str:
         logger.error(f"Invalid JSON string for engine_configs_json: {e}. Using empty configs.")
         engine_configs = {}
 
-    # GUI display options are generally not applicable in server context,
-    # but we'll acknowledge them if present in args_dict.
-    if args_dict.get("display_bounding_boxes") or args_dict.get("display_annotated_output"):
-        logger.info("Display options were provided but are ignored in non-interactive mode.")
-        # In a server, you wouldn't typically pop up GUI windows.
-        # If you wanted to return images with bboxes, that'd be a different feature.
+    document_path = args_dict["document_path"]
 
-    document_path = args_dict["document_path"] # This must be provided
 
-    merge_pairs = []
-    use_word_merging = args_dict.get("use_word_merging", False) # Get the new flag
+    detector_engine_cli = args_dict.get("detector_engine", DEFAULT_DETECTOR_ENGINE)
+    if detector_engine_cli not in AVAILABLE_ENGINES:
+        logger.error(f"Specified detector engine '{detector_engine_cli}' not available. Using default '{DEFAULT_DETECTOR_ENGINE}'.")
+        detector_engine_cli = DEFAULT_DETECTOR_ENGINE
+    
 
-    if use_word_merging:
-        # Define pairs for merging - this could also be made configurable
-        if 'suryaocr' in args_dict.get("ocr_engines", []) and 'tesseractocr' in args_dict.get("ocr_engines", []):
-            merge_pairs.append(('suryaocr', 'tesseractocr'))
-        logger.info(f"Word merging enabled for pairs: {merge_pairs}")
-    else:
-        logger.info("Word merging is disabled.")
+    recognizer_engines_cli = user_selected_engines
+    if not recognizer_engines_cli: # If user didn't specify --ocr_engines
+        recognizer_engines_cli = [name for name in AVAILABLE_ENGINES.keys()] # Use all available
+    
 
-    # Default merger config, can be overridden if passed in args_dict later
-    merger_config = args_dict.get("word_merger_config", {
-        "iou_threshold": 0.4,
-        "solo_confidence_threshold": 0.35,
-        "prefer_engine_on_tie": "suryaocr"
-    })
+    merge_pair_cli = None
+    if args_dict.get("use_line_merging", False) and len(recognizer_engines_cli) >= 2:
+
+        primary_recognizer_for_merge = recognizer_engines_cli[0]
+        secondary_recognizer_for_merge = recognizer_engines_cli[1]
+        merge_pair_cli = (primary_recognizer_for_merge, secondary_recognizer_for_merge)
+        logger.info(f"Line merging enabled for pair: {merge_pair_cli}")
+    elif args_dict.get("use_line_merging", False):
+        logger.warning("Line merging enabled, but fewer than two recognizer engines specified. Merging will be skipped.")
+
+    merger_config_cli = args_dict.get("line_merger_config", {}) # Expects dict, not JSON string here
+    if isinstance(merger_config_cli, str): # Handle if it was accidentally passed as JSON string
+        try: merger_config_cli = json.loads(merger_config_cli)
+        except: merger_config_cli = {}
+
 
     combiner = OCRCombiner(
         engine_registry=engine_registry,
-        engine_names=args_dict.get("ocr_engines", list(AVAILABLE_ENGINES.keys())),
         document_parser=doc_parser,
         document_path=document_path,
         lang_list=args_dict.get("lang", ["ar"]),
+        detector_engine_name=detector_engine_cli,
+        recognizer_engine_names=recognizer_engines_cli,
         engine_configs=engine_configs,
-        merge_engine_outputs=merge_pairs if use_word_merging else [], # Pass pairs only if merging
-        word_merger_config=merger_config if use_word_merging else {}
+        merge_recognizer_outputs_pair=merge_pair_cli, 
+        line_merger_config=merger_config_cli
     )
 
-    # This will hold the text data for each page, either List[List[str]] or List[str]
-    page_level_ocr_content: Any = None
 
-    if use_word_merging and merge_pairs:
-        logger.info("Starting OCR processing with word merging...")
-        merged_structured_output_per_page = combiner.run_ocr_and_merge() # Assumes this method exists and works
-        
-        temp_page_texts = []
-        if merged_structured_output_per_page:
-            for page_idx, page_data in enumerate(merged_structured_output_per_page):
-                page_text = OCRCombiner.reassemble_text_from_structured(page_data)
-                temp_page_texts.append(page_text)
-                if args_dict.get("verbose", 0) >= 2:
-                    logger.debug(f"--- Merged/Reassembled Page {page_idx+1} ---\n{page_text[:200]}...")
-            page_level_ocr_content = temp_page_texts # List[str]
-            logger.info("Word merging and text reassembly completed for all pages.")
-        else:
-            logger.warning("Word merging was enabled, but run_ocr_and_merge returned no data.")
-            page_level_ocr_content = [] # Ensure it's a list
+    logger.info("Starting OCR processing with detection, parallel recognition, and optional merging...")
+    final_structured_document = combiner.run_detection_then_parallel_recognition_and_merge()
+    
+    page_level_ocr_content_strings: List[str] = []
+    page_average_confidences: List[float] = []
+
+    if final_structured_document:
+        for page_idx, page_data_lines in enumerate(final_structured_document):
+            page_text = OCRCombiner.reassemble_text_from_structured(page_data_lines)
+            page_level_ocr_content_strings.append(page_text)
+            
+            line_confs = [ld.get('text_confidence', 0.0) 
+                          for ld in page_data_lines 
+                          if isinstance(ld.get('text_confidence'), (float, int))]
+            avg_page_conf = sum(line_confs) / len(line_confs) if line_confs else 0.0
+            page_average_confidences.append(avg_page_conf)
+
+            if args_dict.get("verbose", 0) >= 1: # INFO level
+                logger.info(f"Page {page_idx+1} Processed Text (AvgConf: {avg_page_conf:.2f}): {page_text[:150].replace(os.linesep, ' ')}...")
     else:
-        logger.info("Starting OCR processing without word merging (raw engine outputs)...")
-        # This returns List[List[str]] -> List of pages, each page is List of engine texts
-        page_level_ocr_content = combiner.run_ocr_pipeline_parallel()
-        logger.info("Raw OCR text processing completed for all pages.")
+        logger.warning("The OCR pipeline returned no structured document data.")
 
-    # LLM Refinement Stage
+
+    
     final_processed_content_list: List[str] = []
+    llm_refinement_threshold = args_dict.get("llm_refinement_threshold", 0.75) # TODO: Adjust threshold
 
-    if args_dict.get("use_llm", True):
+    if args_dict.get("use_llm", True): 
         logger.info("LLM refinement is enabled.")
         if not args_dict.get("groq_api_key") and not os.environ.get("GROQ_API_KEY"):
             logger.warning("Groq API key not provided. LLM refinement will be skipped.")
-            # If LLM is skipped, convert page_level_ocr_content to List[str] if it's List[List[str]]
-            if page_level_ocr_content and isinstance(page_level_ocr_content[0], list): # Raw engine outputs
-                final_processed_content_list = ["\n---\n".join(page_outputs) for page_outputs in page_level_ocr_content]
-            else: # Already List[str] from merging or empty
-                final_processed_content_list = page_level_ocr_content if page_level_ocr_content else []
-        elif not page_level_ocr_content:
-            logger.warning("No OCR content to refine with LLM.")
+            final_processed_content_list = page_level_ocr_content_strings
+        elif not page_level_ocr_content_strings:
+            logger.warning("No OCR content strings to refine with LLM.")
             final_processed_content_list = []
         else:
             try:
                 groq_api_key = args_dict.get("groq_api_key") or os.environ.get("GROQ_API_KEY")
-                if not groq_api_key: # Should have been caught above, but double check
-                     raise ValueError("Groq API Key missing for LLM processing")
+                if not groq_api_key: raise ValueError("Groq API Key missing for LLM processing")
 
                 groq_client = GroqClient(model_name=args_dict.get("llm_model_name", "gemma2-9b-it"), api_token=groq_api_key)
+
                 llm_processor = LLMProcessor(llm_client=groq_client)
                 llm_model_kwargs = {"temperature": args_dict.get("llm_temp", 0.0)}
                 lang_list_str_for_llm = ", ".join(args_dict.get("lang", ["ar"]))
+                
+                logger.info(f"Starting LLM refinement for {len(page_level_ocr_content_strings)} pages if confidence is below {llm_refinement_threshold}...")
 
-                num_pages_to_refine = len(page_level_ocr_content)
-                logger.info(f"Starting LLM refinement for {num_pages_to_refine} pages...")
-
-                for i, ocr_input_for_page in enumerate(page_level_ocr_content):
+                for i, single_page_text_to_refine in enumerate(page_level_ocr_content_strings):
                     page_num = i + 1
-                    
-                    # LLMProcessor.refine_text expects List[str] (multiple engine outputs for one page)
-                    # If merging happened, ocr_input_for_page is already a single string for that page.
-                    # If no merging, ocr_input_for_page is List[str] (raw outputs for that page).
-                    llm_input_texts = [ocr_input_for_page] if isinstance(ocr_input_for_page, str) else ocr_input_for_page
-                    
-                    logger.info(f"Sending Page {page_num}/{num_pages_to_refine} to LLM ({args_dict.get('llm_model_name', 'gemma2-9b-it')}). Input text count: {len(llm_input_texts)}")
+                    current_page_avg_conf = page_average_confidences[i] if i < len(page_average_confidences) else 0.0
 
-                    raw_llm_response = llm_processor.refine_text(
-                        llm_input_texts,
-                        lang_list_str=lang_list_str_for_llm,
-                        context_keywords=args_dict.get("llm_context_keywords", ""),
-                        model_kwargs=llm_model_kwargs
-                    )
-                    
-                    if "[LLM_ERROR" not in raw_llm_response.upper():
-                        refined_page_text = llm_processor.parse_llm_output(raw_llm_response)
-                        if "[LLM_PARSE_ERROR" in refined_page_text.upper():
-                            logger.error(f"LLM parsing failed for Page {page_num}. Using raw LLM response. Details: {refined_page_text}")
-                            final_processed_content_list.append(f"[LLM_REFINE_FAILED_PAGE_{page_num}_PARSE_ERROR: {raw_llm_response}]")
+                    if current_page_avg_conf < llm_refinement_threshold:
+                        logger.info(f"Refining Page {page_num} with LLM (confidence {current_page_avg_conf:.2f} < {llm_refinement_threshold}).")
+                        # LLMProcessor.refine_text expects List[str]. We give it a list with one item.
+                        raw_llm_response = llm_processor.refine_text(
+                            [single_page_text_to_refine], # Pass as a list with one string
+                            lang_list_str=lang_list_str_for_llm,
+                            context_keywords=args_dict.get("llm_context_keywords", ""),
+                            model_kwargs=llm_model_kwargs
+                        )
+                        if "[LLM_ERROR" not in raw_llm_response.upper():
+                            # refined_page_text = llm_processor.parse_llm_output(raw_llm_response)
+                            refined_page_text = raw_llm_response
+                            if "[LLM_PARSE_ERROR" in refined_page_text.upper():
+                                logger.error(f"LLM parsing failed for Page {page_num}. Using raw LLM response. Details: {refined_page_text}")
+                                final_processed_content_list.append(f"[LLM_REFINE_FAILED_PAGE_{page_num}_PARSE_ERROR: {raw_llm_response}]")
+                            else:
+                                final_processed_content_list.append(refined_page_text)
+                                logger.info(f"LLM refinement complete for Page {page_num}.")
                         else:
-                            final_processed_content_list.append(refined_page_text)
-                            logger.info(f"LLM refinement complete for Page {page_num}.")
-                    else:
-                        logger.error(f"LLM refinement API call failed for Page {page_num}. LLM response: {raw_llm_response}")
-                        final_processed_content_list.append(f"[LLM_REFINE_FAILED_PAGE_{page_num}_API_ERROR: {raw_llm_response}]")
-                logger.info("LLM refinement process completed.")
+                            logger.error(f"LLM refinement API call failed for Page {page_num}. LLM response: {raw_llm_response}")
+                            final_processed_content_list.append(f"[LLM_REFINE_FAILED_PAGE_{page_num}_API_ERROR: {raw_llm_response}]")
+                    else: # Confidence is good, no LLM refinement for this page
+                        logger.info(f"Skipping LLM refinement for Page {page_num} (confidence {current_page_avg_conf:.2f} >= {llm_refinement_threshold}).")
+                        final_processed_content_list.append(single_page_text_to_refine) # Use the merged/recognized text
+                logger.info("LLM refinement process completed for applicable pages.")
+
             except Exception as e:
-                logger.error(f"Critical error during LLM processing: {e}. Output may be mixed or fallback.", exc_info=True)
-                # Fallback if LLM fails catastrophically
-                if page_level_ocr_content and isinstance(page_level_ocr_content[0], list):
-                    final_processed_content_list = ["\n---\n".join(page_outputs) for page_outputs in page_level_ocr_content]
-                else:
-                    final_processed_content_list = page_level_ocr_content if page_level_ocr_content else []
+                logger.error(f"Critical error during LLM processing: {e}. Output will be pre-LLM.", exc_info=True)
+                final_processed_content_list = page_level_ocr_content_strings # Fallback
     else: # LLM not used
         logger.info("LLM refinement is disabled.")
-        if page_level_ocr_content and isinstance(page_level_ocr_content[0], list): # Raw engine outputs List[List[str]]
-            # If no merging and no LLM, decide how to present raw outputs:
-            # Option 1: Join them per page
-            final_processed_content_list = []
-            for i, page_outputs_list in enumerate(page_level_ocr_content):
-                page_header = f"---- Page {i+1} (Raw Outputs) ----\n"
-                page_content_parts = [page_header]
-                for j, ocr_engine_out in enumerate(page_outputs_list):
-                    engine_name = args_dict.get("ocr_engines", [])[j] if j < len(args_dict.get("ocr_engines", [])) else f"Engine {j+1}"
-                    engine_header = f"Output from {engine_name}:\n"
-                    page_content_parts.append(engine_header)
-                    page_content_parts.append(ocr_engine_out + "\n")
-                final_processed_content_list.append("".join(page_content_parts))
-
-        elif page_level_ocr_content: # Already List[str] (e.g. from merging, but LLM disabled)
-            final_processed_content_list = page_level_ocr_content
-        else: # No content at all
-            final_processed_content_list = []
+        final_processed_content_list = page_level_ocr_content_strings
 
 
-    # Construct final output string (all pages combined)
+    
     output_string_for_file = ""
     if final_processed_content_list:
         page_texts_for_output = []
         for i, page_text_content in enumerate(final_processed_content_list):
-            header = f"\n--- Page {i+1} ---\n"
+            header = f"\n--- Page {i+1} (Confidence: {page_average_confidences[i]:.2f} " \
+                     f"{'after LLM' if args_dict.get('use_llm', True) and page_average_confidences[i] < llm_refinement_threshold else 'pre-LLM or LLM skipped'}) --- \n"
             page_texts_for_output.append(header + page_text_content)
         output_string_for_file = "\n".join(page_texts_for_output)
-    elif not final_processed_content_list and page_level_ocr_content is None: # No processing happened at all
+    elif not final_processed_content_list and not page_level_ocr_content_strings:
         output_string_for_file = "[No content processed or error in initial stages]"
-    else: # Empty list, but processing might have occurred
-        output_string_for_file = "[No text content extracted]"
+    else:
+        output_string_for_file = "[No text content extracted after processing]"
         
     logger.info("Core OCR processing finished.")
-    return output_string_for_file
+    print(output_string_for_file)
+    return final_processed_content_list
 
 
 def main_cli():
     parser = argparse.ArgumentParser(description="EvenBetterOCR: Advanced OCR Processing Pipeline.")
     parser.add_argument("document_path", type=str, help="Path to the document (PDF or image file) to process.")
-    parser.add_argument("--ocr_engines", nargs="+", type=str, default=list(AVAILABLE_ENGINES.keys()),
-                        choices=list(AVAILABLE_ENGINES.keys()), help="List of OCR engines to use.")
-    parser.add_argument("--lang", nargs="+", type=str, default=["ar"],
-                        help="List of language codes for OCR (e.g., 'en' 'ar').")
-    parser.add_argument("--engine_configs_json", type=str, default="{}",
-                        help="JSON string with specific configurations for engines.")
+    # --ocr_engines now refers to RECOGNIZER engines for the new pipeline
+    parser.add_argument("--ocr_engines", nargs="+", type=str, default=['suryaocr', 'tesseractocr'], # Sensible default recognizers
+                        choices=list(AVAILABLE_ENGINES.keys()), help="List of OCR engines to use for RECOGNITION.")
+    parser.add_argument("--detector_engine", type=str, default=DEFAULT_DETECTOR_ENGINE,
+                        choices=list(AVAILABLE_ENGINES.keys()), help="OCR engine to use for initial layout/text line DETECTION.")
+    
+    parser.add_argument("--lang", nargs="+", type=str, default=["ar"], help="List of language codes for OCR.")
+    parser.add_argument("--engine_configs_json", type=str, default="{}", help="JSON string with specific configurations for engines.")
 
-    # New flag for word merging
-    parser.add_argument("--use_word_merging", action=argparse.BooleanOptionalAction, default=False,
-                        help="Enable/Disable word-level merging of specified OCR engine outputs.")
+    parser.add_argument("--use_line_merging", action=argparse.BooleanOptionalAction, default=True, # Default to True for new pipeline
+                        help="Enable/Disable line-level merging of specified OCR recognizer outputs.")
+    parser.add_argument("--line_merger_config_json", type=str, default='{"min_wordfreq_for_dict_check": 1e-7}', # Example for LinePairMerger
+                        help="JSON string for LinePairMerger configuration.")
+
 
     parser.add_argument("--use_llm", action=argparse.BooleanOptionalAction, default=True, help="Enable/Disable LLM refinement.")
-    parser.add_argument("--llm_model_name", type=str, default="gemma2-9b-it", help="Groq LLM model name to use.")
-    parser.add_argument("--groq_api_key", type=str, default=os.environ.get("GROQ_API_KEY"),
-                        help="Groq API key. Can also be set via GROQ_API_KEY environment variable.")
-    parser.add_argument("--llm_context_keywords", type=str, default="", help="Optional context keywords for the LLM prompt.")
+    parser.add_argument("--llm_refinement_threshold", type=float, default=0.80, # Example: refine if page confidence < 80%
+                        help="Average page confidence threshold below which LLM refinement is triggered.")
+    parser.add_argument("--llm_model_name", type=str, default="gemma2-9b-it", help="Groq LLM model name.")
+    parser.add_argument("--groq_api_key", type=str, default=os.environ.get("GROQ_API_KEY"), help="Groq API key.")
+    parser.add_argument("--llm_context_keywords", type=str, default="", help="Optional context keywords for LLM.")
     parser.add_argument("--llm_temp", type=float, default=0.0, help="Temperature for LLM generation.")
 
-    parser.add_argument("--display_bounding_boxes", type=str, choices=list(AVAILABLE_ENGINES.keys()) + [None], default=None, # Allow None
-                        help="Display bounding boxes from a specific engine for the first page (requires GUI).")
-    parser.add_argument("--display_annotated_output", type=str, choices=list(AVAILABLE_ENGINES.keys()) + [None], default=None, # Allow None
-                        help="Display annotated output from a specific engine for the first page (requires GUI).")
-    
-    parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase output verbosity (-v for INFO, -vv for DEBUG).")
-    parser.add_argument("--output_file", type=str, default=None, help="Optional path to save the final text output.")
+    parser.add_argument("--display_bounding_boxes", type=str, choices=list(AVAILABLE_ENGINES.keys()) + [None], default=None,
+                        help="Display bounding boxes from a specific engine for the first page (GUI).")
+    parser.add_argument("--display_annotated_output", type=str, choices=list(AVAILABLE_ENGINES.keys()) + [None], default=None,
+                        help="Display annotated output from a specific engine for the first page (GUI).")
+    # New display options for the new pipeline
+    parser.add_argument("--display_layout_regions", action="store_true", help="Display detected layout regions (uses detector_engine).")
+    parser.add_argument("--display_detected_lines", action="store_true", help="Display detected text lines after layout filtering (uses detector_engine).")
+
+
+    parser.add_argument("-v", "--verbose", action="count", default=0, help="Verbosity (-v INFO, -vv DEBUG).")
+    parser.add_argument("--output_file", type=str, default=None, help="Path to save final text output.")
 
     args = parser.parse_args()
-    args_dict = vars(args) # Convert Namespace to dict for run_ocr_processing
+    args_dict = vars(args)
 
-    # GUI display logic (run this before core processing if needed, and if not in server context)
-    # This part is problematic for server use and should ideally be separated or handled differently.
-    # For now, it will be skipped if run_ocr_processing is called directly.
-    if not os.environ.get("FLASK_RUNNING"): # Simple check if we are in CLI mode
-        if args.display_bounding_boxes or args.display_annotated_output:
-            display_engine_name = args.display_bounding_boxes or args.display_annotated_output
-            if display_engine_name: # Check if a name is actually provided
-                logger.info(f"Attempting to display output for engine: {display_engine_name}")
-                try:
-                    # This part needs access to engine_registry, doc_parser etc.
-                    # which are inside run_ocr_processing. This suggests display
-                    # might need to be a post-processing step or integrated differently.
-                    # For CLI, it's fine if run_ocr_processing also handles this,
-                    # but it would need the `Image` objects.
-                    # For simplicity, this display logic might be better as a separate script/tool.
-                    # Quick fix: Load doc_parser and engine_registry here for display if CLI
-                    doc_parser_display = DocumentParser()
-                    images = doc_parser_display.load_images_from_document(args.document_path)
-                    if images:
-                        engine_registry_display = EngineRegistry()
-                        engine_cls_disp = AVAILABLE_ENGINES.get(display_engine_name)
-                        if engine_cls_disp:
-                            engine_registry_display.register_engine(display_engine_name, engine_cls_disp)
-                            first_page_image = images[0]
-                            engine_class_to_display = engine_registry_display.get_engine_class(display_engine_name)
-                            
-                            engine_configs_display_json = args_dict.get("engine_configs_json", "{}")
-                            engine_configs_display = json.loads(engine_configs_display_json)
-                            engine_config_display_specific = engine_configs_display.get(display_engine_name, {})
+    # Parse line_merger_config_json into a dict
+    try:
+        args_dict["line_merger_config"] = json.loads(args.line_merger_config_json)
+    except json.JSONDecodeError:
+        logger.error(f"Invalid JSON for --line_merger_config_json. Using empty dict. Value: {args.line_merger_config_json}")
+        args_dict["line_merger_config"] = {}
 
-                            engine_to_display = engine_class_to_display(lang_list=args.lang, **engine_config_display_specific)
 
-                            if args.display_bounding_boxes:
-                                logger.info(f"Displaying bounding boxes for {display_engine_name} on the first page...")
-                                engine_to_display.display_bounding_boxes(first_page_image.copy())
-                            if args.display_annotated_output:
-                                logger.info(f"Displaying annotated output for {display_engine_name} on the first page...")
-                                engine_to_display.display_annotated_output(first_page_image.copy())
-                        else:
-                             logger.warning(f"Display engine '{display_engine_name}' not in AVAILABLE_ENGINES.")
-                    else:
-                        logger.warning("No images loaded, cannot perform display operation.")
-                except Exception as e:
-                    logger.error(f"Error during display operation for engine {display_engine_name}: {e}", exc_info=True)
+    if not os.environ.get("FLASK_RUNNING"): 
+        doc_parser_display = DocumentParser()
+        images_for_display = None
+        try:
+            if args.document_path: # Ensure document_path is available
+                 images_for_display = doc_parser_display.load_images_from_document(args.document_path)
+        except Exception as e:
+            logger.error(f"Failed to load document for display: {e}")
+
+        if images_for_display and images_for_display[0]:
+            first_page_image_disp = images_for_display[0].copy()
+            
+            # Instantiate engine_configs for display part as well
+            engine_configs_disp_main = {}
+            try: engine_configs_disp_main = json.loads(args.engine_configs_json)
+            except: pass
+
+            if args.display_layout_regions or args.display_detected_lines:
+                detector_disp_name = args.detector_engine
+                detector_cls_disp = AVAILABLE_ENGINES.get(detector_disp_name)
+                if detector_cls_disp:
+                    detector_config_disp = engine_configs_disp_main.get(detector_disp_name, {})
+                    # Ensure use_recognizer is False if Surya is just detecting for display
+                    if detector_disp_name == 'suryaocr' and 'use_recognizer' not in detector_config_disp:
+                        detector_config_disp['use_recognizer'] = False
+                    try:
+                        detector_inst_disp = detector_cls_disp(lang_list=args.lang, **detector_config_disp)
+                        if args.display_layout_regions and hasattr(detector_inst_disp, 'display_layout_regions'):
+                            logger.info(f"Displaying layout regions using {detector_disp_name}...")
+                            detector_inst_disp.display_layout_regions(first_page_image_disp)
+                        if args.display_detected_lines and hasattr(detector_inst_disp, 'display_detected_text_lines'):
+                            logger.info(f"Displaying detected text lines (layout filtered) using {detector_disp_name}...")
+                            detector_inst_disp.display_detected_text_lines(first_page_image_disp, with_layout_filtering=True)
+                    except Exception as e:
+                        logger.error(f"Error during advanced display for {detector_disp_name}: {e}", exc_info=True)
+
+            display_engine_name_legacy = args.display_bounding_boxes or args.display_annotated_output
+            if display_engine_name_legacy:
+                engine_cls_legacy_disp = AVAILABLE_ENGINES.get(display_engine_name_legacy)
+                if engine_cls_legacy_disp:
+                    legacy_engine_config_disp = engine_configs_disp_main.get(display_engine_name_legacy, {})
+                    try:
+                        engine_legacy_disp = engine_cls_legacy_disp(lang_list=args.lang, **legacy_engine_config_disp)
+
+                        if args.display_bounding_boxes:
+                            logger.info(f"Displaying legacy bounding boxes for {display_engine_name_legacy}...")
+                            engine_legacy_disp.display_bounding_boxes(first_page_image_disp)
+                        if args.display_annotated_output:
+                            logger.info(f"Displaying legacy annotated output for {display_engine_name_legacy}...")
+                            engine_legacy_disp.display_annotated_output(first_page_image_disp)
+                    except Exception as e:
+                         logger.error(f"Error during legacy display for {display_engine_name_legacy}: {e}", exc_info=True)
 
 
     final_text_output = run_ocr_processing(args_dict)
 
     print("\n--- Final Processed Text (from main_cli) ---")
-    print(final_text_output)
-    print("--- End of Final Processed Text ---")
+    print(final_text_output) # This now includes page numbers and confidence
+    # print("--- End of Final Processed Text ---") # Redundant with header in string
 
     if args.output_file:
         try:
