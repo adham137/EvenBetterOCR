@@ -8,7 +8,7 @@ from ..engines.IEngine import OCREngine
 from ..engines.EngineRegistry import EngineRegistry # To get engine classes
 from ..parsers.parser import DocumentParser
 
-from .wordMerger import WordMerger
+from .lineMerger import WordMerger
 
 logger = logging.getLogger(__name__)
 

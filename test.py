@@ -22,11 +22,11 @@ images = parser.load_images_from_document(PDF_PATH)
 sOCR = SuryaOCREngine(['ar'])
 temp = sOCR.detect_text_lines_with_layout(images) ## Processing of 50 pages took appx 30 sec 
 
-# tesseractOCR = TesseractOCREngine(['ar'])
-# tesseract_recognized_pages = tesseractOCR.recognize_detected_lines(
-#     images,
-#     temp # Output from your Surya detector (or any other detector)
-# )
+tesseractOCR = TesseractOCREngine(['ar'])
+tesseract_recognized_pages = tesseractOCR.recognize_detected_lines(
+    images,
+    temp # Output from your Surya detector (or any other detector)
+)
 # print(tesseract_recognized_pages)
 
 # out = tesseractOCR.recognize_text(images)
@@ -57,8 +57,8 @@ temp = sOCR.detect_text_lines_with_layout(images) ## Processing of 50 pages took
 #   [page_2], ...
 #]
 
-t = sOCR.get_structured_output(images, input_detections = temp )
-print(t)
+surya_recognized_pages = sOCR.get_structured_output(images, input_detections = temp )
+print(surya_recognized_pages)
 # [
 #   // page_1
 #   [
@@ -86,7 +86,10 @@ print(t)
 # sOCR.display_annotated_output(images[1], structured_output[1])
 # sOCR.display_bounding_boxes(images[0], structured_output[0])
 
-
+from src.combiner.lineMerger import LineROVERMerger
+lm = LineROVERMerger()
+out = lm.merge_document_results(surya_recognized_pages, tesseract_recognized_pages)
+print(out)
 # from database.app.repositories.document_repository import DocumentRepository
 # dr = DocumentRepository()
 # results = []
