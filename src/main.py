@@ -4,7 +4,9 @@ import logging
 import os
 from typing import Any, List, Dict, Optional 
 import tempfile 
-import uuid 
+import uuid
+
+from src.llm.clients.gemini_client import GeminiClient 
 
 
 from .parsers.parser import DocumentParser
@@ -150,12 +152,11 @@ def run_ocr_processing(args_dict: Dict[str, Any]) -> str:
             final_processed_content_list = []
         else:
             try:
-                groq_api_key = args_dict.get("groq_api_key") or os.environ.get("GROQ_API_KEY")
-                if not groq_api_key: raise ValueError("Groq API Key missing for LLM processing")
-
-                groq_client = GroqClient(model_name=args_dict.get("llm_model_name", "gemma2-9b-it"), api_token=groq_api_key)
-
-                llm_processor = LLMProcessor(llm_client=groq_client)
+                
+                # Use gemini 2.0 instead of groq
+                # groq_client = GroqClient(model_name=args_dict.get("llm_model_name", "gemma2-9b-it"), api_token=groq_api_key)
+                llm_client = GeminiClient()
+                llm_processor = LLMProcessor(llm_client=llm_client)
                 llm_model_kwargs = {"temperature": args_dict.get("llm_temp", 0.0)}
                 lang_list_str_for_llm = ", ".join(args_dict.get("lang", ["ar"]))
                 

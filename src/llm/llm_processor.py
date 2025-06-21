@@ -1,14 +1,13 @@
 import logging
 import json
 import re
-from typing import Dict, List, Any 
-from .clients.groq_client import GroqClient 
+from typing import Dict, List, Any  
 from .prompts import TEXT_DETECTION_PROMPT_TEMPLATE, BOX_DETECTION_PROMPT_TEMPLATE 
 
 logger = logging.getLogger(__name__)
 
 class LLMProcessor:
-    def __init__(self, llm_client: GroqClient, prompt_key: str = "TEXT_DETECTION"):
+    def __init__(self, llm_client, prompt_key: str = "TEXT_DETECTION"):
         self.llm_client = llm_client
         self.prompt_templates = {
             "TEXT_DETECTION": TEXT_DETECTION_PROMPT_TEMPLATE, 
@@ -54,7 +53,7 @@ class LLMProcessor:
         
         logger.info("Sending request to LLM for text refinement of one page...")
         try:
-            llm_response = self.llm_client.run(prompt, model_kwargs=model_kwargs or {})
+            llm_response = self.llm_client.run(prompt)
             logger.info("Received response from LLM for one page.")
             logger.debug(f"LLM raw response for page (first 300 chars): {llm_response[:300]}...")
             return llm_response

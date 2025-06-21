@@ -17,7 +17,10 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 DETECTOR_BATCH_SIZE = 4      # Each batch takes 440mb of vram, calculate your own 
 RECOGNITION_BATCH_SIZE = 15 # Each batch takes 40mb of vram, calculate your own (Keep in mind that the models themselves take 2GB of vram)
 LAYOUT_BATCH_SIZE = 8       # Each batch takes 220mb of vram, calculate your own (Keep in mind that the models themselves take 2GB of vram)
-# os.environ['LAYOUT_BATCH_SIZE']='16'
+
+ALL_LAYOUTS = ['Caption', 'Footnote', 'Formula', 'ListItem', 'PageFooter', 'PageHeader', 'Picture', 'Figure', 'SectionHeader', 'Table', 'Form', 'TableOfContents', 'Handwriting', 'Text', 'TextInlineMath']
+to_drop = {'Table', 'Picture', 'Figure', 'PageHeader'}
+ALLOWED_LAYOUTS = [L for L in ALL_LAYOUTS if L not in to_drop]
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +67,7 @@ class SuryaOCREngine(OCREngine):
             {'bbox': [x1, y1, x2, y2], 'label': str, 'confidence': float, 'position': int}
         """
         if self.layout_predictor is None:
-            # This should ideally not happen if constructor ensures it or raises
-            logger.error("Surya Layout Predictor is not initialized.")
-            raise RuntimeError("Surya Layout Predictor is not initialized.")
+            self.layout_predictor = LayoutPredictor(dtype=torch.float32)
 
         if not images:
             return []
@@ -97,6 +98,7 @@ class SuryaOCREngine(OCREngine):
                         })
                 all_pages_layout_data.append(page_layout_data)
             
+            self.layout_predictor = None
             if self.device.type == 'cuda':
                 torch.cuda.empty_cache()
 
@@ -145,8 +147,7 @@ class SuryaOCREngine(OCREngine):
             self.layout_predictor = LayoutPredictor(dtype=torch.float32)
             
         if valid_layout_labels is None:
-            valid_layout_labels = ['Text', 'SectionHeader', 'PageHeader', 'PageFooter', 
-                                   'ListItem', 'Caption', 'Footnote', 'Title', 'TextInlineMath']
+            valid_layout_labels = ALLOWED_LAYOUTS
 
         all_pages_layout_structs = self._get_layout_predictions(images) # List[List[LayoutDict]]
 
