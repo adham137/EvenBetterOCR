@@ -11,28 +11,9 @@ The core idea is to overcome the limitations of individual OCR engines by:
 3.  Intelligently merging the outputs of different recognizer engines at the line level.
 4.  Optionally refining the merged text using powerful LLMs, especially for lower-confidence outputs.
 
-## ✨ Features
-
-*   **Hybrid OCR Approach:**
-    *   **Dedicated Detection Engine:** Uses a specialized engine (e.g., Surya) for accurate document layout analysis and text line detection.
-    *   **Parallel Recognition Engines:** Supports multiple OCR engines (e.g., Surya, Tesseract) for recognizing text within the detected lines.
-*   **Advanced Line Merging:** Implements a sophisticated `LineROVERMerger` to combine outputs from two recognizer engines, leveraging token alignment, confidence scores, and dictionary checks (using `wordfreq` and `camel-tools` for Arabic).
-*   **LLM-Powered Refinement:** Integrates with LLMs (Gemini, Groq via `langchain-groq`) to correct and enhance OCR results, particularly for pages with lower confidence scores.
-*   **Flexible Engine Configuration:**
-    *   Easily select detector and recognizer engines.
-    *   Provide engine-specific configurations via JSON.
-*   **Document Format Support:** Processes both PDF and common image formats (PNG, JPG, JPEG, BMP, TIFF).
-*   **API & CLI Access:**
-    *   **Flask API:** Provides an HTTP endpoint (`/ocr`) for easy integration into other services.
-    *   **Command-Line Interface:** Offers a comprehensive CLI (`src/main.py`) for direct processing and experimentation.
-*   **Language Support:** Configurable language support, with a focus on Arabic ('ar') demonstrated in configurations.
-*   **Evaluation Framework:** Includes an `eval.py` script to benchmark different OCR engines (including EvenBetterOCR itself) against ground truth data using CER and Levenshtein distance.
-*   **Modular Design:**
-    *   Pluggable `IEngine` interface for adding new OCR engines.
-    *   Separate components for parsing, combining, LLM processing, and engine management.
-*   **Visualization:** Options to display bounding boxes, layout regions, and annotated outputs for debugging and analysis (CLI only).
-
 ## 🏛️ Architecture Overview
+
+![diagram](./images/OCR_GRAD.png "EvenBetterOCR Architecture")
 
 The EvenBetterOCR pipeline generally follows these steps :
 
@@ -63,7 +44,28 @@ The EvenBetterOCR pipeline generally follows these steps :
     *   The final processed text, potentially refined by the LLM, is returned.
     *   The CLI can save this to a file, while the API returns it in a JSON response.
 
-![diagram](./images/OCR_GRAD.png "EvenBetterOCR Architecture")
+
+## ✨ Features
+
+*   **Hybrid OCR Approach:**
+    *   **Dedicated Detection Engine:** Uses a specialized engine (e.g., Surya) for accurate document layout analysis and text line detection.
+    *   **Parallel Recognition Engines:** Supports multiple OCR engines (e.g., Surya, Tesseract) for recognizing text within the detected lines.
+*   **Advanced Line Merging:** Implements a sophisticated `LineROVERMerger` to combine outputs from two recognizer engines, leveraging token alignment, confidence scores, and dictionary checks (using `wordfreq` and `camel-tools` for Arabic).
+*   **LLM-Powered Refinement:** Integrates with LLMs (Gemini, Groq via `langchain-groq`) to correct and enhance OCR results, particularly for pages with lower confidence scores.
+*   **Flexible Engine Configuration:**
+    *   Easily select detector and recognizer engines.
+    *   Provide engine-specific configurations via JSON.
+*   **Document Format Support:** Processes both PDF and common image formats (PNG, JPG, JPEG, BMP, TIFF).
+*   **API & CLI Access:**
+    *   **Flask API:** Provides an HTTP endpoint (`/ocr`) for easy integration into other services.
+    *   **Command-Line Interface:** Offers a comprehensive CLI (`src/main.py`) for direct processing and experimentation.
+*   **Language Support:** Configurable language support, with a focus on Arabic ('ar') demonstrated in configurations.
+*   **Evaluation Framework:** Includes an `eval.py` script to benchmark different OCR engines (including EvenBetterOCR itself) against ground truth data using CER and Levenshtein distance.
+*   **Modular Design:**
+    *   Pluggable `IEngine` interface for adding new OCR engines.
+    *   Separate components for parsing, combining, LLM processing, and engine management.
+*   **Visualization:** Options to display bounding boxes, layout regions, and annotated outputs for debugging and analysis (CLI only).
+
 
 ## 📂 Project Structure
 
