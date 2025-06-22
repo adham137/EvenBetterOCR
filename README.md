@@ -1,7 +1,7 @@
 # EvenBetterOCR: Advanced OCR Pipeline
 
-[![Python Version](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) <!-- 
+[![Python Version](https://img.shields.io/badge/python-3.10.12-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) 
 
 **EvenBetterOCR** is a powerful and flexible Optical Character Recognition (OCR) pipeline that improves on [BetterOCR][https://github.com/junhoyeo/BetterOCR] , designed to deliver high-accuracy text extraction from documents (PDFs and images). It leverages a multi-stage process involving state-of-the-art OCR engines, advanced line-merging techniques, and Large Language Model (LLM) based refinement.
 
