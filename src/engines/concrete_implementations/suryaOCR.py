@@ -51,6 +51,8 @@ class SuryaOCREngine(OCREngine):
         return predictions
     
     def _get_line_detections(self, images: List[Image.Image]) -> List[List[Any]]: 
+        if not self.detection_predictor:
+            self.detection_predictor = DetectionPredictor(dtype=torch.float32)
         predictions =   self.detection_predictor([image.convert("RGB") for image in images], batch_size= DETECTOR_BATCH_SIZE) # Ensure RGB
         if len(predictions) and hasattr(predictions[0], 'bboxes'):
             return predictions                 # return a list of predictions (one for each page)
@@ -125,9 +127,9 @@ class SuryaOCREngine(OCREngine):
         self, 
         images: List[Image.Image],
         valid_layout_labels: List[str] = None,
-        layout_confidence_threshold: float = 0.5,
+        layout_confidence_threshold: float = 0.4,
         text_detection_confidence_threshold: float = 0.5, 
-        min_text_line_iou_with_layout_roi: float = 0.7
+        min_text_line_iou_with_layout_roi: float = 0.4
     ) -> List[List[Dict[str, Any]]]:
         """
         Detects text lines within valid layout regions.
@@ -335,6 +337,8 @@ class SuryaOCREngine(OCREngine):
                     logger.warning(f"Could not draw text label '{text_to_draw}': {e_draw}")
         
         img_display.show(title=f"{title_prefix} Output")
+        img_display.save('C:\\Users\\Adham\\Downloads\\diagram images\\final_detections.png')
+    
 
     def display_layout_regions(self, image: Image.Image):
         """Displays detected layout regions on the image."""
@@ -368,13 +372,14 @@ class SuryaOCREngine(OCREngine):
             logger.warning("No text line data to display.")
             image.show(title=f"{title} (No Detections)")
 
-    #TODO: update to new pipeline
+
     def display_bounding_boxes(self, image: Image.Image, structured_output: List[Dict[str, Any]] = None):
         # if the structured output is provided, it must be of only one image
         logger.info("SuryaOCR: Displaying bounding boxes.")
         if structured_output is None:
-            detections = self.get_structured_output([image])[0]
-            items_to_draw = [{'bbox': det.bbox, 'confidence': det.confidence} for det in detections]
+            # bboxes = self._get_line_detections([Image])[0]
+            detections = self._get_line_detections([image])[0]
+            items_to_draw = [{'bbox': det.bbox, 'confidence': det.confidence} for det in detections.bboxes]
         else:
             items_to_draw = structured_output
         self._draw_on_image(image, items_to_draw, draw_text_content=False)
@@ -385,6 +390,7 @@ class SuryaOCREngine(OCREngine):
             structured_output = self.get_structured_output([image])[0]
         self._draw_on_image(image, structured_output, draw_text_content=True)
     def _calculate_intersection_over_area(self, box_target: List[float], box_reference: List[float]) -> float:
+
         """
         Calculates Intersection(box_target, box_reference) / Area(box_target).
         Useful for checking how much of box_target is within box_reference.
@@ -419,3 +425,4 @@ class SuryaOCREngine(OCREngine):
         except Exception as e:
             logger.error(f"Error in _calculate_intersection_over_area: Target: {box_target}, Ref: {box_reference} - {e}")
             return 0.0
+        

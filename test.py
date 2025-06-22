@@ -17,14 +17,15 @@ from src.parsers.parser import DocumentParser
 from src.llm.clients.gemini_client import GeminiClient
 
 
-# PDF_PATH = 'D:\\ASU\\sem 10\\GRAD PROJ\\Getting Data\\merged.pdf'#'data\\table_in_page_2.pdf'#'data\\alamiria_2003_88.pdf'
-# parser = DocumentParser()
-# images = parser.load_images_from_document(PDF_PATH)
+PDF_PATH = 'data\\big_doc.pdf'
+parser = DocumentParser()
+images = parser.load_images_from_document(PDF_PATH)
 
-# sOCR = SuryaOCREngine(['ar'])
-# # temp = sOCR.detect_text_lines_with_layout(images) ## Processing of 50 pages took appx 30 sec 
+sOCR = SuryaOCREngine(['ar'])
+temp = sOCR.detect_text_lines_with_layout(images) ## Processing of 50 pages took appx 30 sec 
 
-# sOCR.display_detected_text_lines(images[10])
+
+# surya_recognized_pages = sOCR.get_structured_output(images, input_detections = temp )
 
 
 # tesseractOCR = TesseractOCREngine(['ar'])

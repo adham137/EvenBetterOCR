@@ -125,7 +125,7 @@ def ocr_pdf_evenBetterOCR(pdf_path):
     args_dict["document_path"] = pdf_path
 
     # Detector Engine
-    args_dict["detector_engine"] = 'suryaocr'
+    args_dict["detector_engine"] = 'tesseractocr,suryaocr'
 
     # Recognizer Engines (ocr_engines from form corresponds to recognizer_engine_names)
     ocr_engines_str = 'suryaocr'
@@ -284,4 +284,21 @@ if __name__ == "__main__":
 
     import pprint
     pprint.pprint(stats)
+    # import pandas as pd
+    # with open('data\\ocr_bench.json', 'r', encoding='utf-8') as f:
+    #     data = json.load(f)
+
+    # df = pd.DataFrame(data["files"])
+
+    # # Filter out defective documents
+    # df_filtered = df[(df["lev"] <= 1000) & (df["cer"] <= 5)]
+
+    # # Compute per-engine statistics
+    # stats = df_filtered.groupby("engine").agg(
+    #     mean_cer=("cer", "mean"),
+    #     std_cer=("cer", "std"),
+    #     mean_lev=("lev", "mean"),
+    #     std_lev=("lev", "std"),
+    # ).reset_index()
     
+    # print(stats)

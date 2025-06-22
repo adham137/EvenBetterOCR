@@ -53,10 +53,13 @@ class LLMProcessor:
         
         logger.info("Sending request to LLM for text refinement of one page...")
         try:
+            from jiwer import cer
             llm_response = self.llm_client.run(prompt)
+            original_reponse = single_page_engine_outputs[0]
+            final_resonse = llm_response if cer(original_reponse, llm_response)< 0.60 else original_reponse # To avoid halucinations
             logger.info("Received response from LLM for one page.")
             logger.debug(f"LLM raw response for page (first 300 chars): {llm_response[:300]}...")
-            return llm_response
+            return final_resonse
         except Exception as e:
             logger.error(f"Error during LLM inference for page: {e}", exc_info=True)
             return f"[LLM_ERROR_PAGE_INFERENCE: {e}]" # Return error message as string
