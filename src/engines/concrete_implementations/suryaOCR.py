@@ -43,8 +43,7 @@ class SuryaOCREngine(OCREngine):
     def _get_raw_text_line_detections(self, images: List[Image.Image]) -> List[Any]: 
         """Internal helper to get raw text line detections for a batch of images."""
         if self.detection_predictor is None:
-            logger.error("Surya Detection Predictor not initialized.")
-            raise RuntimeError("Surya Detection Predictor not initialized.")
+            self.detection_predictor = DetectionPredictor(dtype=torch.float32)
         pil_images = [img.convert("RGB") for img in images]
         with torch.no_grad():
             predictions = self.detection_predictor(pil_images, batch_size=DETECTOR_BATCH_SIZE) 
@@ -288,7 +287,8 @@ class SuryaOCREngine(OCREngine):
 
     def _draw_on_image(self, image: Image.Image, items_to_draw: List[Dict[str, Any]],
                        draw_text_content: bool = False, default_box_color="lime", 
-                       text_color="black", font_size=10, title_prefix="SuryaOCR"):
+                       text_color="black", font_size=10, title_prefix="SuryaOCR",
+                       save_path:str = None):
         img_display = image.convert("RGB").copy()
         draw = ImageDraw.Draw(img_display)
         try:
@@ -337,20 +337,19 @@ class SuryaOCREngine(OCREngine):
                     logger.warning(f"Could not draw text label '{text_to_draw}': {e_draw}")
         
         img_display.show(title=f"{title_prefix} Output")
-        img_display.save('C:\\Users\\Adham\\Downloads\\diagram images\\final_detections.png')
+        if save_path: img_display.save(save_path)
     
-
-    def display_layout_regions(self, image: Image.Image):
+    def display_layout_regions(self, image: Image.Image, save_path:str = None):
         """Displays detected layout regions on the image."""
         logger.info("SuryaOCR: Displaying layout regions.")
         layout_data_per_page = self._get_layout_predictions([image.copy()])
         if layout_data_per_page:
-            self._draw_on_image(image, layout_data_per_page[0], draw_text_content=False, title_prefix="SuryaLayout")
+            self._draw_on_image(image, layout_data_per_page[0], draw_text_content=False, title_prefix="SuryaLayout", save_path=save_path)
         else:
             logger.warning("No layout data to display.")
             image.show(title="SuryaLayout Output (No Detections)")
 
-    def display_detected_text_lines(self, image: Image.Image, with_layout_filtering: bool = True):
+    def display_detected_text_lines(self, image: Image.Image, with_layout_filtering: bool = True, save_path:str = None):
         """Displays detected text lines, optionally filtered by layout."""
         logger.info(f"SuryaOCR: Displaying detected text lines {'with' if with_layout_filtering else 'without'} layout filtering.")
         if with_layout_filtering:
@@ -367,11 +366,10 @@ class SuryaOCREngine(OCREngine):
             title = "Surya Text Lines (Raw)"
 
         if lines_data_per_page and lines_data_per_page[0]:
-            self._draw_on_image(image, lines_data_per_page[0], draw_text_content=False, title_prefix=title)
+            self._draw_on_image(image, lines_data_per_page[0], draw_text_content=False, title_prefix=title, save_path=save_path)
         else:
             logger.warning("No text line data to display.")
             image.show(title=f"{title} (No Detections)")
-
 
     def display_bounding_boxes(self, image: Image.Image, structured_output: List[Dict[str, Any]] = None):
         # if the structured output is provided, it must be of only one image

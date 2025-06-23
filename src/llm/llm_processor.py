@@ -48,18 +48,27 @@ class LLMProcessor:
         """
         if self.prompt_template != TEXT_DETECTION_PROMPT_TEMPLATE:
              logger.warning(f"Refining text with a prompt template ('{self.prompt_template[:30]}...') not designed for text detection. Results might be unexpected.")
-        
+        if len(single_page_engine_outputs[0]) == 0:
+            return ""
         prompt = self.prepare_prompt_for_text_refinement(single_page_engine_outputs, lang_list_str, context_keywords)
         
         logger.info("Sending request to LLM for text refinement of one page...")
         try:
             from jiwer import cer
+            final_response = ""
             llm_response = self.llm_client.run(prompt)
             original_reponse = single_page_engine_outputs[0]
-            final_resonse = llm_response if cer(original_reponse, llm_response)< 0.60 else original_reponse # To avoid halucinations
+            diff = cer(original_reponse, llm_response)
+            print(f"CER between LLM response and OCR output is ({diff})")
+            if diff > 0.2: # To avoid hallucinations
+                final_response = original_reponse
+                print(f"LLM response deviates a lot of from the original, Sticking with engine output")
+            else:
+                print("Sticking with LLM output")
+                final_response = llm_response
             logger.info("Received response from LLM for one page.")
             logger.debug(f"LLM raw response for page (first 300 chars): {llm_response[:300]}...")
-            return final_resonse
+            return final_response
         except Exception as e:
             logger.error(f"Error during LLM inference for page: {e}", exc_info=True)
             return f"[LLM_ERROR_PAGE_INFERENCE: {e}]" # Return error message as string

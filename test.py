@@ -17,12 +17,15 @@ from src.parsers.parser import DocumentParser
 from src.llm.clients.gemini_client import GeminiClient
 
 
-PDF_PATH = 'data\\big_doc.pdf'
+PDF_PATH = 'D:\\ASU\\sem 10\\GRAD PROJ\\Getting Data\\dataset\\pdfs\\2025_1738.pdf'
 parser = DocumentParser()
 images = parser.load_images_from_document(PDF_PATH)
 
 sOCR = SuryaOCREngine(['ar'])
-temp = sOCR.detect_text_lines_with_layout(images) ## Processing of 50 pages took appx 30 sec 
+
+sOCR.display_layout_regions(images[1], save_path='C:\\Users\\Adham\\Downloads\\diagram images\\2_layout.png')
+sOCR.display_detected_text_lines(images[1], with_layout_filtering=False, save_path='C:\\Users\\Adham\\Downloads\\diagram images\\2_text.png')
+sOCR.display_detected_text_lines(images[1], with_layout_filtering=True, save_path='C:\\Users\\Adham\\Downloads\\diagram images\\2_final.png')
 
 
 # surya_recognized_pages = sOCR.get_structured_output(images, input_detections = temp )
