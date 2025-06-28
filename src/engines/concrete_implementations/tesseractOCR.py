@@ -18,7 +18,7 @@ class TesseractOCREngine(OCREngine):
         self.tesseract_lang_str = "+".join([LANG_CODE_MAPPING.get(l, l) for l in self.lang_list])
         self.tesseract_config = self.configs.get("tesseract_config", "")
         # Add a specific config for recognizing single lines, e.g., PSM 7 or 8
-        self.tesseract_single_line_config = self.configs.get("tesseract_single_line_config", "--psm 7")
+        self.tesseract_single_line_config = self.configs.get("tesseract_single_line_config", "--psm 13")
 
 
         tesseract_cmd = self.configs.get("tesseract_cmd")

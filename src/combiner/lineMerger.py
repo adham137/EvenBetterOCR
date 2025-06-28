@@ -33,9 +33,10 @@ class LineROVERMerger:
         self.dictionary_available = False
 
         if self.lang == "ar":
-            self.normalize_fn = lambda text: normalize_alef_ar(
-                                            normalize_alef_maksura_ar(
-                                            normalize_teh_marbuta_ar(str(text or ''))))
+            # self.normalize_fn = lambda text: normalize_alef_ar(
+            #                                 normalize_alef_maksura_ar(
+            #                                 normalize_teh_marbuta_ar(str(text or ''))))
+            self.normalize_fn = self.normalize_fn = lambda text: str(text or '')
             self.tokenize_fn = simple_word_tokenize
             try:
                 word_frequency("كلمة", "ar"); self.dictionary_available = True
@@ -198,12 +199,23 @@ class LineROVERMerger:
             }
             base_line_info = {k: v for k,v in base_line_info.items() if v is not None}
 
-            line_A_processed = self._preprocess_line_data(line_A_full_data, engine_A_name)
-            line_B_processed = self._preprocess_line_data(line_B_full_data, engine_B_name)
+            line_A_conf = line_A_full_data.get('text_confidence')
+            line_B_conf = line_B_full_data.get('text_confidence')
+            
+            final_line_item = ''
+            if(line_A_conf< 0.6 or line_B_conf< 0.6):
+                if(line_A_conf< 0.6):
+                    final_line_item = {**base_line_info, 'text': line_B_full_data.get('text'), 'text_confidence': line_B_conf}
+                else:
+                    final_line_item = {**base_line_info, 'text': line_A_full_data.get('text'), 'text_confidence': line_A_conf}
+    
+            else:
+                line_A_processed = self._preprocess_line_data(line_A_full_data, engine_A_name)
+                line_B_processed = self._preprocess_line_data(line_B_full_data, engine_B_name)
 
-            merged_text, merged_text_conf = self.merge_single_line(line_A_processed, line_B_processed)
-
-            final_line_item = {**base_line_info, 'text': merged_text, 'text_confidence': merged_text_conf}
+                merged_text, merged_text_conf = self.merge_single_line(line_A_processed, line_B_processed)
+                final_line_item = {**base_line_info, 'text': merged_text, 'text_confidence': merged_text_conf}
+            
             merged_page_output_list.append(final_line_item)
         
         def append_remaining(source_lines, start_idx, dest_list):
