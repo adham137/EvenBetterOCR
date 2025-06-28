@@ -128,7 +128,7 @@ def ocr_pdf_evenBetterOCR(pdf_path):
     args_dict["detector_engine"] = 'suryaocr'
 
     # Recognizer Engines (ocr_engines from form corresponds to recognizer_engine_names)
-    ocr_engines_str = 'suryaocr'
+    ocr_engines_str = 'suryaocr,tesseractocr'
     args_dict["ocr_engines"] = [eng.strip() for eng in ocr_engines_str.split(',') if eng.strip() and eng.strip() in AVAILABLE_ENGINES]
 
 
@@ -151,7 +151,7 @@ def ocr_pdf_evenBetterOCR(pdf_path):
 
 
     # LLM Settings
-    args_dict["use_llm"] = True
+    args_dict["use_llm"] = False
     args_dict["llm_refinement_threshold"] = 0.95
     args_dict["llm_model_name"] = "gemma2-9b-it"
     args_dict["groq_api_key"] = os.environ.get("GROQ_API_KEY")
@@ -275,7 +275,7 @@ def evaluate_ocr_engines(pdf_dir: str,
 if __name__ == "__main__":
     PDF_PATH  = 'D:\\ASU\\sem 10\\GRAD PROJ\\Getting Data\\dataset\\pdfs'
     GT_PATH   = 'D:\\ASU\\sem 10\\GRAD PROJ\\Getting Data\\dataset\\gt_preprocessed_txt'
-    JSON_PATH = 'data\\ocr_bench_2.json'
+    JSON_PATH = 'data\\ocr_bench_3.json'
     stats = evaluate_ocr_engines(
        pdf_dir= PDF_PATH,
        gt_dir= GT_PATH,

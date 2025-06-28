@@ -60,7 +60,7 @@ class LLMProcessor:
             original_reponse = single_page_engine_outputs[0]
             diff = cer(original_reponse, llm_response)
             print(f"CER between LLM response and OCR output is ({diff})")
-            if diff > 0.2: # To avoid hallucinations
+            if diff > 0.3: # To avoid hallucinations
                 final_response = original_reponse
                 print(f"LLM response deviates a lot of from the original, Sticking with engine output")
             else:

@@ -64,7 +64,7 @@ class LineROVERMerger:
         token_infos = []
         if not tokens:
             return {'tokens': [], 'token_infos': [], 'line_confidence': line_rec_confidence, 'engine_name': engine_name}
-        scaled_line_conf = line_rec_confidence * line_rec_confidence
+        scaled_line_conf = line_rec_confidence
         if self.use_word_confidences and word_segments and len(word_segments) == len(tokens):
             all_segments_have_conf = all('confidence' in ws and isinstance(ws['confidence'], (float,int)) for ws in word_segments)
             if all_segments_have_conf:
@@ -77,7 +77,6 @@ class LineROVERMerger:
         else:
             for token_str in tokens: token_infos.append({'text': token_str, 'confidence': scaled_line_conf})
         return {'tokens': tokens, 'token_infos': token_infos, 'line_confidence': line_rec_confidence, 'engine_name': engine_name}
-
     def _merge_aligned_tokens(self, token_A_info: Optional[Dict], token_B_info: Optional[Dict]) -> Tuple[Optional[str], float]:
         word_A = token_A_info['text'] if token_A_info else None
         conf_A = token_A_info['confidence'] if token_A_info else 0.0
@@ -111,97 +110,61 @@ class LineROVERMerger:
         merged_tokens_list = []
         merged_token_confidences = []
         
-        op_codes_edlib = None
-        try:
-            alignment_result_edlib = edlib.align(tokens_A, tokens_B, mode="NW", task="path", k=-1)
-            op_codes_edlib = alignment_result_edlib.get("alignment")
-        except Exception as e:
-            logger.warning(f"edlib.align raised an exception: {e}. Will attempt fallback alignment.")
-            op_codes_edlib = None # Ensure it's None to trigger fallback
 
-        if op_codes_edlib:
-            logger.debug("Using edlib alignment for line merge.")
-            ptr_A, ptr_B = 0, 0
-            for op in op_codes_edlib:
-                token_A_info_for_op, token_B_info_for_op = None, None
-                if op == 0: # edlib: Match/Mismatch - aligned
-                    if ptr_A < len(token_infos_A): token_A_info_for_op = token_infos_A[ptr_A]
-                    if ptr_B < len(token_infos_B): token_B_info_for_op = token_infos_B[ptr_B]
-                    ptr_A += 1; ptr_B += 1
-                elif op == 1: # edlib: Insertion in A (query) relative to B (target) => B has gap
-                    if ptr_A < len(token_infos_A): token_A_info_for_op = token_infos_A[ptr_A]
-                    ptr_A += 1
-                elif op == 2: # edlib: Deletion in A (query) relative to B (target) => A has gap
-                    if ptr_B < len(token_infos_B): token_B_info_for_op = token_infos_B[ptr_B]
-                    ptr_B += 1
+        s = difflib.SequenceMatcher(None, tokens_A, tokens_B, autojunk=False)
+        # get_opcodes format: (tag, i1, i2, j1, j2)
+        # tag is 'equal', 'replace', 'delete' (from A), 'insert' (into A from B)
+        for tag, i1, i2, j1, j2 in s.get_opcodes():
+            if tag == 'equal':
+                for k in range(i2 - i1):
+                    token_A_info_for_op = token_infos_A[i1 + k]
+                    token_B_info_for_op = token_infos_B[j1 + k]
+                    merged_word, merged_conf = self._merge_aligned_tokens(token_A_info_for_op, token_B_info_for_op)
+                    if merged_word is not None:
+                        merged_tokens_list.append(merged_word)
+                        merged_token_confidences.append(merged_conf)
+            elif tag == 'replace':
+                len_A_segment = i2 - i1
+                len_B_segment = j2 - j1
+                min_len = min(len_A_segment, len_B_segment)
+                for k in range(min_len):
+                    token_A_info_for_op = token_infos_A[i1 + k]
+                    token_B_info_for_op = token_infos_B[j1 + k]
+                    merged_word, merged_conf = self._merge_aligned_tokens(token_A_info_for_op, token_B_info_for_op)
+                    if merged_word is not None: merged_tokens_list.append(merged_word); merged_token_confidences.append(merged_conf)
                 
-                merged_word, merged_conf = self._merge_aligned_tokens(token_A_info_for_op, token_B_info_for_op)
-                if merged_word is not None:
-                    merged_tokens_list.append(merged_word)
-                    merged_token_confidences.append(merged_conf)
-        else: # Fallback to difflib.SequenceMatcher
-            logger.warning("edlib alignment failed or not available. Using difflib.SequenceMatcher as fallback.")
-            s = difflib.SequenceMatcher(None, tokens_A, tokens_B)
-            # get_opcodes format: (tag, i1, i2, j1, j2)
-            # tag is 'equal', 'replace', 'delete' (from A), 'insert' (into A from B)
-            for tag, i1, i2, j1, j2 in s.get_opcodes():
-                if tag == 'equal':
-                    for k in range(i2 - i1):
-                        token_A_info_for_op = token_infos_A[i1 + k] if (i1 + k) < len(token_infos_A) else None
-                        token_B_info_for_op = token_infos_B[j1 + k] if (j1 + k) < len(token_infos_B) else None # Should be same as A
-                        merged_word, merged_conf = self._merge_aligned_tokens(token_A_info_for_op, token_B_info_for_op)
-                        if merged_word is not None:
-                            merged_tokens_list.append(merged_word)
-                            merged_token_confidences.append(merged_conf)
-                elif tag == 'replace':
-                    # For each replaced item, effectively align A's token with B's token
-                    len_A_segment = i2 - i1
-                    len_B_segment = j2 - j1
-                    # This requires aligning the sub-segments; for simplicity, process one by one if lengths match
-                    # Or if lengths differ, it's a block of insertions/deletions within the replace
-                    # SequenceMatcher 'replace' can be complex if lengths are different.
-                    # We'll iterate through the minimum of these lengths, treating them as direct replaces,
-                    # and the remainder as insertions/deletions.
-                    min_len = min(len_A_segment, len_B_segment)
-                    for k in range(min_len):
-                        token_A_info_for_op = token_infos_A[i1+k] if (i1+k) < len(token_infos_A) else None
-                        token_B_info_for_op = token_infos_B[j1+k] if (j1+k) < len(token_infos_B) else None
-                        merged_word, merged_conf = self._merge_aligned_tokens(token_A_info_for_op, token_B_info_for_op)
+                if len_A_segment > min_len: # Remainder in A are deletions from B's perspective
+                    for k_extra in range(min_len, len_A_segment):
+                        token_A_info_for_op = token_infos_A[i1 + k_extra]
+                        merged_word, merged_conf = self._merge_aligned_tokens(token_A_info_for_op, None)
                         if merged_word is not None: merged_tokens_list.append(merged_word); merged_token_confidences.append(merged_conf)
-                    
-                    if len_A_segment > min_len: # Deletions from B's perspective / Insertions from A
-                        for k_extra in range(min_len, len_A_segment):
-                            token_A_info_for_op = token_infos_A[i1+k_extra] if (i1+k_extra) < len(token_infos_A) else None
-                            merged_word, merged_conf = self._merge_aligned_tokens(token_A_info_for_op, None) # A vs gap
-                            if merged_word is not None: merged_tokens_list.append(merged_word); merged_token_confidences.append(merged_conf)
-                    elif len_B_segment > min_len: # Insertions from B's perspective / Deletions from A
-                         for k_extra in range(min_len, len_B_segment):
-                            token_B_info_for_op = token_infos_B[j1+k_extra] if (j1+k_extra) < len(token_infos_B) else None
-                            merged_word, merged_conf = self._merge_aligned_tokens(None, token_B_info_for_op) # gap vs B
-                            if merged_word is not None: merged_tokens_list.append(merged_word); merged_token_confidences.append(merged_conf)
+                elif len_B_segment > min_len: # Remainder in B are insertions from A's perspective
+                    for k_extra in range(min_len, len_B_segment):
+                        token_B_info_for_op = token_infos_B[j1 + k_extra]
+                        merged_word, merged_conf = self._merge_aligned_tokens(None, token_B_info_for_op)
+                        if merged_word is not None: merged_tokens_list.append(merged_word); merged_token_confidences.append(merged_conf)
 
-                elif tag == 'delete': # Delete from A (A has words, B has a gap)
-                    for k in range(i2 - i1):
-                        token_A_info_for_op = token_infos_A[i1 + k] if (i1+k) < len(token_infos_A) else None
-                        merged_word, merged_conf = self._merge_aligned_tokens(token_A_info_for_op, None) # A vs gap
-                        if merged_word is not None:
-                            merged_tokens_list.append(merged_word)
-                            merged_token_confidences.append(merged_conf)
-                elif tag == 'insert': # Insert from B (B has words, A has a gap)
-                    for k in range(j2 - j1):
-                        token_B_info_for_op = token_infos_B[j1 + k] if (j1+k) < len(token_infos_B) else None
-                        merged_word, merged_conf = self._merge_aligned_tokens(None, token_B_info_for_op) # gap vs B
-                        if merged_word is not None:
-                            merged_tokens_list.append(merged_word)
-                            merged_token_confidences.append(merged_conf)
+            elif tag == 'delete': # Delete from A (A has words, B has a gap)
+                for k in range(i2 - i1):
+                    token_A_info_for_op = token_infos_A[i1 + k]
+                    merged_word, merged_conf = self._merge_aligned_tokens(token_A_info_for_op, None)
+                    if merged_word is not None:
+                        merged_tokens_list.append(merged_word)
+                        merged_token_confidences.append(merged_conf)
+            elif tag == 'insert': # Insert from B (B has words, A has a gap)
+                for k in range(j2 - j1):
+                    token_B_info_for_op = token_infos_B[j1 + k]
+                    merged_word, merged_conf = self._merge_aligned_tokens(None, token_B_info_for_op)
+                    if merged_word is not None:
+                        merged_tokens_list.append(merged_word)
+                        merged_token_confidences.append(merged_conf)
             
             if not merged_tokens_list: # If difflib somehow results in nothing, fallback to higher conf line
-                logger.warning("difflib alignment also resulted in no merged tokens. Falling back to highest confidence line text.")
+                # logger.warning("difflib alignment also resulted in no merged tokens. Falling back to highest confidence line text.")
                 if line_A_processed['line_confidence'] >= line_B_processed['line_confidence']:
                     return " ".join(tokens_A), line_A_processed['line_confidence']
                 else:
                     return " ".join(tokens_B), line_B_processed['line_confidence']
-
 
         final_text = " ".join(merged_tokens_list)
         overall_line_confidence = sum(merged_token_confidences) / len(merged_token_confidences) if merged_token_confidences else 0.0
